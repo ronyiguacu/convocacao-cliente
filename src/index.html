@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>convocacao</title>
+  <script src="socket.io.min.js"></script>
+</head>
+<body>
+  <!-- Esta janela fica OCULTA. So mantem a conexao com o servidor. -->
+  <script>
+    const SERVIDOR = 'https://painel-servidor.onrender.com'
+
+    const invoke = window.__TAURI__.core.invoke
+    const listen = window.__TAURI__.event.listen
+
+    let config = null
+    let socket = null
+
+    function conectar() {
+      if (!config) return
+      if (socket) socket.disconnect()
+
+      socket = io(SERVIDOR, {
+        transports: ['websocket'],
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000
+      })
+
+      socket.on('connect', () => {
+        console.log('Conectado ao servidor')
+        socket.emit('identificar', { nome: config.nome, setor: config.setor })
+      })
+
+      socket.on('disconnect', (motivo) => {
+        console.log('Desconectado:', motivo)
+      })
+
+      socket.on('connect_error', (err) => {
+        console.error('Erro de conexao:', err.message)
+      })
+
+      // O servidor manda uma chamada -> abre o aviso em tela cheia.
+      socket.on('chamada', (dados) => {
+        invoke('mostrar_alerta', {
+          id: String(dados.id),
+          origem: dados.origem || '',
+          motivo: dados.motivo || ''
+        })
+      })
+    }
+
+    // Quando o funcionario confirma, o backend avisa esta janela para
+    // mandar a confirmacao ao servidor.
+    listen('confirmar-chamada', (evt) => {
+      if (socket && config) {
+        socket.emit('confirmado', {
+          id: evt.payload.id,
+          funcionario: config.nome
+        })
+      }
+    })
+
+    // Quando o cadastro e salvo, recebemos a config e conectamos.
+    listen('config-salva', (evt) => {
+      config = evt.payload
+      conectar()
+    })
+
+    // Inicio: le a config; se nao existir, abre o cadastro.
+    ;(async () => {
+      config = await invoke('ler_config')
+      if (config) {
+        conectar()
+      } else {
+        invoke('abrir_cadastro')
+      }
+    })()
+  </script>
+</body>
+</html>

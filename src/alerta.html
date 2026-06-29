@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Voce foi chamado!</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: flashBg 0.8s ease;
+    }
+    @keyframes flashBg {
+      0%   { background: #ff2200; }
+      30%  { background: #0a0a0a; }
+      60%  { background: #ff2200; }
+      100% { background: #0a0a0a; }
+    }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 30, 0, 0.15);
+      pointer-events: none;
+      animation: pulseOverlay 1.5s infinite;
+    }
+    @keyframes pulseOverlay {
+      0%, 100% { opacity: 0; }
+      50%      { opacity: 1; }
+    }
+    .caixa { text-align: center; padding: 40px; width: 100%; }
+    .alerta {
+      font-size: 22px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 6px;
+      color: #ff4444;
+      margin-bottom: 20px;
+      animation: piscar 0.6s infinite;
+    }
+    @keyframes piscar {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.2; }
+    }
+    .quem { font-size: 22px; color: #aaa; margin-bottom: 10px; }
+    .nome {
+      font-size: 84px;
+      font-weight: 800;
+      line-height: 1.05;
+      margin-bottom: 18px;
+      text-shadow: 0 0 30px rgba(255,40,0,0.6);
+    }
+    .motivo { font-size: 28px; color: #ddd; margin-bottom: 40px; }
+    button {
+      background: #18c964;
+      color: #04140a;
+      border: none;
+      padding: 22px 60px;
+      border-radius: 14px;
+      font-size: 28px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 10px 40px rgba(24,201,100,0.4);
+    }
+    button:hover { background: #14b257; }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      15%  { transform: translateX(-16px); }
+      30%  { transform: translateX(16px); }
+      45%  { transform: translateX(-10px); }
+      60%  { transform: translateX(10px); }
+      75%  { transform: translateX(-5px); }
+      90%  { transform: translateX(5px); }
+    }
+    .shake { animation: shake 0.6s ease; }
+  </style>
+</head>
+<body>
+  <div class="overlay"></div>
+
+  <div class="caixa" id="caixa">
+    <div class="alerta">&#9888; ATENCAO &#9888;</div>
+    <div class="quem">esta chamando voce</div>
+    <div class="nome" id="nomeGestor">&mdash;</div>
+    <div class="motivo" id="motivoTexto"></div>
+    <button id="btnConfirmar">&#9989; CONFIRMAR</button>
+  </div>
+
+  <script>
+    const invoke = window.__TAURI__.core.invoke
+
+    let dadosChamada = null
+    let intervalo = null
+
+    function tocarSom() {
+      try {
+        const ctx = new AudioContext()
+        ;[0, 0.3, 0.6].forEach(delay => {
+          const osc = ctx.createOscillator()
+          const gain = ctx.createGain()
+          osc.connect(gain)
+          gain.connect(ctx.destination)
+          osc.frequency.value = 1040
+          gain.gain.setValueAtTime(0.6, ctx.currentTime + delay)
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.25)
+          osc.start(ctx.currentTime + delay)
+          osc.stop(ctx.currentTime + delay + 0.3)
+        })
+      } catch (e) {}
+    }
+
+    function sacudir() {
+      const caixa = document.getElementById('caixa')
+      caixa.classList.remove('shake')
+      void caixa.offsetWidth
+      caixa.classList.add('shake')
+    }
+
+    function confirmar() {
+      if (!dadosChamada) return
+      clearInterval(intervalo)
+      const id = dadosChamada.id
+      dadosChamada = null
+      invoke('confirmar', { id: id })
+    }
+
+    document.getElementById('btnConfirmar').addEventListener('click', confirmar)
+
+    ;(async () => {
+      dadosChamada = await invoke('pegar_dados_alerta')
+      if (!dadosChamada) return
+      document.getElementById('nomeGestor').textContent = dadosChamada.origem || '—'
+      document.getElementById('motivoTexto').textContent = dadosChamada.motivo || ''
+
+      tocarSom()
+      sacudir()
+      intervalo = setInterval(() => {
+        tocarSom()
+        sacudir()
+      }, 4000)
+    })()
+  </script>
+</body>
+</html>

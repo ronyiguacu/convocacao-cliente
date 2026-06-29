@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissoes padrao para todas as janelas (eventos, janelas, etc).",
+  "windows": ["*"],
+  "permissions": ["core:default"]
+}

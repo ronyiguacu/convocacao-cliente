@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Configuracao Inicial</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #fff;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .caixa {
+      background: #1a1d27;
+      border: 1px solid #2a2d3a;
+      border-radius: 16px;
+      padding: 36px;
+      width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    h2 { font-size: 18px; text-align: center; }
+    p { font-size: 13px; color: #888; text-align: center; }
+    label { font-size: 12px; color: #888; margin-bottom: 4px; display: block; }
+    input, select {
+      background: #0f1117;
+      border: 1px solid #2a2d3a;
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      width: 100%;
+    }
+    input:focus, select:focus { outline: none; border-color: #4f6ef7; }
+    button {
+      background: #4f6ef7;
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #3d5ce5; }
+    .erro { color: #f87171; font-size: 12px; text-align: center; display: none; }
+  </style>
+</head>
+<body>
+  <div class="caixa">
+    <h2>Configuracao Inicial</h2>
+    <p>Preencha uma vez, nunca mais pergunta.</p>
+
+    <div>
+      <label>Seu nome</label>
+      <input type="text" id="nome" placeholder="Ex: Joao" />
+    </div>
+
+    <div>
+      <label>Seu setor</label>
+      <select id="setor">
+        <option value="">Carregando...</option>
+      </select>
+    </div>
+
+    <p class="erro" id="erro">Preencha seu nome.</p>
+    <button id="btn">Salvar e entrar</button>
+  </div>
+
+  <script>
+    const SERVIDOR = 'https://painel-servidor.onrender.com'
+    const invoke = window.__TAURI__.core.invoke
+
+    async function carregarSetores() {
+      try {
+        const res = await fetch(SERVIDOR + '/setores')
+        const setores = await res.json()
+        document.getElementById('setor').innerHTML =
+          setores.map(s => `<option value="${s}">${s}</option>`).join('')
+      } catch (e) {
+        document.getElementById('setor').innerHTML = '<option value="Outro">Outro</option>'
+      }
+    }
+    carregarSetores()
+
+    async function salvar() {
+      const nome = document.getElementById('nome').value.trim()
+      const setor = document.getElementById('setor').value
+      if (!nome) {
+        document.getElementById('erro').style.display = 'block'
+        return
+      }
+      await invoke('salvar_config', { nome, setor })
+    }
+
+    document.getElementById('btn').addEventListener('click', salvar)
+    document.getElementById('nome').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') salvar()
+    })
+  </script>
+</body>
+</html>

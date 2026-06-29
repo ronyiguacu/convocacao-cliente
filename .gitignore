@@ -1,0 +1,10 @@
+# Dependencias
+node_modules/
+
+# Build do Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# NUNCA suba a chave privada
+*.key
+*.key.pub
