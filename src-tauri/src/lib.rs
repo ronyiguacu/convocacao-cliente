@@ -10,6 +10,18 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_updater::UpdaterExt as _;
 
+const SERVIDOR: &str = "https://painel-servidor.onrender.com";
+
+/// Busca os setores no servidor pelo lado nativo (sem restricao de CORS do navegador).
+#[tauri::command]
+async fn carregar_setores() -> Vec<String> {
+    let url = format!("{SERVIDOR}/setores");
+    match reqwest::Client::new().get(&url).send().await {
+        Ok(resp) => resp.json::<Vec<String>>().await.unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
 // ---------- Configuracao do funcionario ----------
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -178,7 +190,8 @@ pub fn run() {
             ler_config,
             salvar_config,
             mostrar_alerta,
-            confirmar
+            confirmar,
+            carregar_setores
         ])
         .setup(|app| {
             let handle = app.handle().clone();

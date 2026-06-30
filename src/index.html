@@ -108,10 +108,13 @@
 
       (async () => {
         try {
-          const res = await fetch(SERVIDOR + '/setores');
-          const setores = await res.json();
-          document.getElementById('setor').innerHTML =
-            setores.map(s => `<option value="${s}">${s}</option>`).join('');
+          const setores = await invoke('carregar_setores');
+          if (setores && setores.length) {
+            document.getElementById('setor').innerHTML =
+              setores.map(s => `<option value="${s}">${s}</option>`).join('');
+          } else {
+            document.getElementById('setor').innerHTML = '<option value="Outro">Outro</option>';
+          }
         } catch (e) {
           document.getElementById('setor').innerHTML = '<option value="Outro">Outro</option>';
         }
