@@ -4,80 +4,216 @@
   <meta charset="UTF-8" />
   <title>convocacao</title>
   <script src="socket.io.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; }
+    body { font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+
+    /* ===== Tela de cadastro ===== */
+    body.v-cadastro {
+      background: #0f1117; color: #fff;
+      display: flex; align-items: center; justify-content: center; height: 100vh;
+    }
+    .caixa {
+      background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 16px;
+      padding: 36px; width: 300px; display: flex; flex-direction: column; gap: 16px;
+    }
+    .caixa h2 { font-size: 18px; text-align: center; }
+    .caixa p { font-size: 13px; color: #888; text-align: center; }
+    .caixa label { font-size: 12px; color: #888; margin-bottom: 4px; display: block; }
+    .caixa input, .caixa select {
+      background: #0f1117; border: 1px solid #2a2d3a; color: #fff;
+      padding: 10px 14px; border-radius: 8px; font-size: 14px; width: 100%;
+    }
+    .caixa input:focus, .caixa select:focus { outline: none; border-color: #ff7a00; }
+    .caixa button {
+      background: #ff7a00; color: #1a1000; border: none; padding: 12px;
+      border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer;
+    }
+    .caixa button:hover { background: #ff8c1a; }
+    .erro { color: #f87171; font-size: 12px; text-align: center; display: none; }
+
+    /* ===== Tela de alerta (tela cheia) ===== */
+    body.v-alerta {
+      background: #0a0a0a; color: #fff;
+      display: flex; align-items: center; justify-content: center; height: 100vh;
+    }
+    body.v-alerta.flash { animation: flashBg 0.8s ease; }
+    @keyframes flashBg {
+      0% { background: #ff2200; } 30% { background: #0a0a0a; }
+      60% { background: #ff2200; } 100% { background: #0a0a0a; }
+    }
+    .overlay {
+      position: fixed; inset: 0; background: rgba(255,30,0,0.15);
+      pointer-events: none; animation: pulseOverlay 1.5s infinite; display: none;
+    }
+    body.v-alerta .overlay { display: block; }
+    @keyframes pulseOverlay { 0%,100% { opacity: 0; } 50% { opacity: 1; } }
+    .alertaCaixa { text-align: center; padding: 40px; width: 100%; display: none; }
+    body.v-alerta .alertaCaixa { display: block; }
+    .alerta {
+      font-size: 22px; font-weight: 700; text-transform: uppercase; letter-spacing: 6px;
+      color: #ff7a00; margin-bottom: 20px; animation: piscar 0.6s infinite;
+    }
+    @keyframes piscar { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+    .quem { font-size: 22px; color: #aaa; margin-bottom: 10px; }
+    .nomeGestor {
+      font-size: 84px; font-weight: 800; line-height: 1.05; margin-bottom: 18px;
+      text-shadow: 0 0 30px rgba(255,120,0,0.6);
+    }
+    .motivo { font-size: 28px; color: #ddd; margin-bottom: 40px; min-height: 1px; }
+    .btnConfirmar {
+      background: #18c964; color: #04140a; border: none; padding: 22px 60px;
+      border-radius: 14px; font-size: 28px; font-weight: 800; cursor: pointer;
+      box-shadow: 0 10px 40px rgba(24,201,100,0.4);
+    }
+    .btnConfirmar:hover { background: #14b257; }
+    @keyframes shake {
+      0%,100% { transform: translateX(0); } 15% { transform: translateX(-16px); }
+      30% { transform: translateX(16px); } 45% { transform: translateX(-10px); }
+      60% { transform: translateX(10px); } 75% { transform: translateX(-5px); }
+      90% { transform: translateX(5px); }
+    }
+    .shake { animation: shake 0.6s ease; }
+  </style>
 </head>
 <body>
-  <!-- Esta janela fica OCULTA. So mantem a conexao com o servidor. -->
+  <div id="app"></div>
+
   <script>
-    const SERVIDOR = 'https://painel-servidor.onrender.com'
+    const TAURI = window.__TAURI__;
+    const invoke = TAURI.core.invoke;
+    const listen = TAURI.event.listen;
+    const SERVIDOR = 'https://painel-servidor.onrender.com';
+    const app = document.getElementById('app');
 
-    const invoke = window.__TAURI__.core.invoke
-    const listen = window.__TAURI__.event.listen
+    // ---------------- CADASTRO ----------------
+    function viewCadastro() {
+      document.body.className = 'v-cadastro';
+      app.innerHTML = `
+        <div class="caixa">
+          <h2>Configuracao Inicial</h2>
+          <p>Preencha uma vez, nunca mais pergunta.</p>
+          <div>
+            <label>Seu nome</label>
+            <input type="text" id="nome" placeholder="Ex: Joao" />
+          </div>
+          <div>
+            <label>Seu setor</label>
+            <select id="setor"><option value="">Carregando...</option></select>
+          </div>
+          <p class="erro" id="erro">Preencha seu nome.</p>
+          <button id="btn">Salvar e entrar</button>
+        </div>`;
 
-    let config = null
-    let socket = null
+      (async () => {
+        try {
+          const res = await fetch(SERVIDOR + '/setores');
+          const setores = await res.json();
+          document.getElementById('setor').innerHTML =
+            setores.map(s => `<option value="${s}">${s}</option>`).join('');
+        } catch (e) {
+          document.getElementById('setor').innerHTML = '<option value="Outro">Outro</option>';
+        }
+      })();
 
-    function conectar() {
-      if (!config) return
-      if (socket) socket.disconnect()
-
-      socket = io(SERVIDOR, {
-        transports: ['websocket'],
-        reconnection: true,
-        reconnectionAttempts: Infinity,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        timeout: 20000
-      })
-
-      socket.on('connect', () => {
-        console.log('Conectado ao servidor')
-        socket.emit('identificar', { nome: config.nome, setor: config.setor })
-      })
-
-      socket.on('disconnect', (motivo) => {
-        console.log('Desconectado:', motivo)
-      })
-
-      socket.on('connect_error', (err) => {
-        console.error('Erro de conexao:', err.message)
-      })
-
-      // O servidor manda uma chamada -> abre o aviso em tela cheia.
-      socket.on('chamada', (dados) => {
-        invoke('mostrar_alerta', {
-          id: String(dados.id),
-          origem: dados.origem || '',
-          motivo: dados.motivo || ''
-        })
-      })
+      async function salvar() {
+        const nome = document.getElementById('nome').value.trim();
+        const setor = document.getElementById('setor').value;
+        if (!nome) { document.getElementById('erro').style.display = 'block'; return; }
+        await invoke('salvar_config', { nome, setor });
+      }
+      document.getElementById('btn').addEventListener('click', salvar);
+      document.getElementById('nome').addEventListener('keydown', e => { if (e.key === 'Enter') salvar(); });
     }
 
-    // Quando o funcionario confirma, o backend avisa esta janela para
-    // mandar a confirmacao ao servidor.
-    listen('confirmar-chamada', (evt) => {
-      if (socket && config) {
-        socket.emit('confirmado', {
-          id: evt.payload.id,
-          funcionario: config.nome
-        })
-      }
-    })
+    // ---------------- ALERTA ----------------
+    function viewAlerta() {
+      document.body.className = 'v-alerta';
+      app.innerHTML = `
+        <div class="overlay"></div>
+        <div class="alertaCaixa" id="caixa">
+          <div class="alerta">&#9888; ATENCAO &#9888;</div>
+          <div class="quem">esta chamando voce</div>
+          <div class="nomeGestor" id="nomeGestor">&mdash;</div>
+          <div class="motivo" id="motivoTexto"></div>
+          <button class="btnConfirmar" id="btnConfirmar">&#9989; CONFIRMAR</button>
+        </div>`;
 
-    // Quando o cadastro e salvo, recebemos a config e conectamos.
-    listen('config-salva', (evt) => {
-      config = evt.payload
-      conectar()
-    })
+      let dados = null;
+      let intervalo = null;
 
-    // Inicio: le a config; se nao existir, abre o cadastro.
-    ;(async () => {
-      config = await invoke('ler_config')
-      if (config) {
-        conectar()
-      } else {
-        invoke('abrir_cadastro')
+      function tocarSom() {
+        try {
+          const ctx = new AudioContext();
+          [0, 0.3, 0.6].forEach(delay => {
+            const osc = ctx.createOscillator(); const gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.frequency.value = 1040;
+            gain.gain.setValueAtTime(0.6, ctx.currentTime + delay);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.25);
+            osc.start(ctx.currentTime + delay); osc.stop(ctx.currentTime + delay + 0.3);
+          });
+        } catch (e) {}
       }
-    })()
+      function sacudir() {
+        const c = document.getElementById('caixa');
+        c.classList.remove('shake'); void c.offsetWidth; c.classList.add('shake');
+      }
+      function flash() {
+        document.body.classList.remove('flash'); void document.body.offsetWidth;
+        document.body.classList.add('flash');
+      }
+
+      function iniciar(d) {
+        dados = d;
+        document.getElementById('nomeGestor').textContent = d.origem || '—';
+        document.getElementById('motivoTexto').textContent = d.motivo || '';
+        flash(); tocarSom(); sacudir();
+        if (intervalo) clearInterval(intervalo);
+        intervalo = setInterval(() => { tocarSom(); sacudir(); }, 4000);
+      }
+      function parar() { if (intervalo) { clearInterval(intervalo); intervalo = null; } }
+
+      document.getElementById('btnConfirmar').addEventListener('click', () => {
+        if (!dados) return;
+        const id = dados.id; dados = null; parar();
+        invoke('confirmar', { id: id });
+      });
+
+      // O backend dispara este evento quando mostra o alerta.
+      listen('disparar-alerta', e => iniciar(e.payload));
+      listen('parar-alerta', () => parar());
+    }
+
+    // ---------------- OCULTA (conexao com o servidor) ----------------
+    async function viewOculta() {
+      document.body.style.background = 'transparent';
+      const config = await invoke('ler_config');
+      if (!config) return;
+
+      const socket = io(SERVIDOR, {
+        transports: ['websocket'], reconnection: true,
+        reconnectionAttempts: Infinity, reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000, timeout: 20000
+      });
+      socket.on('connect', () => socket.emit('identificar', { nome: config.nome, setor: config.setor }));
+      socket.on('chamada', d => invoke('mostrar_alerta', {
+        id: String(d.id), origem: d.origem || '', motivo: d.motivo || ''
+      }));
+      listen('confirmar-chamada', e => {
+        socket.emit('confirmado', { id: e.payload.id, funcionario: config.nome });
+      });
+    }
+
+    // ---------------- Roteamento ----------------
+    (async () => {
+      let view = 'oculta';
+      try { view = await invoke('qual_view'); } catch (e) {}
+      if (view === 'cadastro') viewCadastro();
+      else if (view === 'alerta') viewAlerta();
+      else viewOculta();
+    })();
   </script>
 </body>
 </html>
