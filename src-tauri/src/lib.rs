@@ -76,11 +76,7 @@ fn salvar_config(app: AppHandle, nome: String, setor: String) -> Result<(), Stri
 #[tauri::command]
 fn mostrar_alerta(app: AppHandle, id: String, origem: String, motivo: String) {
     let payload = serde_json::json!({ "id": id, "origem": origem, "motivo": motivo });
-    let labels: Vec<String> = {
-        let state = app.state::<AppState>();
-        state.overlays.lock().unwrap().clone()
-    };
-    for label in labels {
+    for label in overlay_labels(&app) {
         if let Some(w) = app.get_webview_window(&label) {
             let _ = w.show();
             let _ = w.set_focus();
@@ -94,15 +90,16 @@ fn mostrar_alerta(app: AppHandle, id: String, origem: String, motivo: String) {
 fn confirmar(app: AppHandle, id: String) {
     let _ = app.emit("confirmar-chamada", serde_json::json!({ "id": id }));
     let _ = app.emit("parar-alerta", ());
-    let labels: Vec<String> = {
-        let state = app.state::<AppState>();
-        state.overlays.lock().unwrap().clone()
-    };
-    for label in labels {
+    for label in overlay_labels(&app) {
         if let Some(w) = app.get_webview_window(&label) {
             let _ = w.hide();
         }
     }
+}
+
+/// Retorna os labels das janelas de alerta (copia, sem segurar o lock).
+fn overlay_labels(app: &AppHandle) -> Vec<String> {
+    app.state::<AppState>().overlays.lock().unwrap().clone()
 }
 
 // ---------- Auxiliares ----------
