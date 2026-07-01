@@ -1,6 +1,6 @@
 {
   "name": "convocacao-cliente",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Cliente de convocacao (Tauri) - aviso em tela cheia para funcionarios",
   "private": true,
   "scripts": {

@@ -7,7 +7,6 @@ use tauri::{
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
-use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_updater::UpdaterExt as _;
 
 const SERVIDOR: &str = "https://painel-servidor.onrender.com";
@@ -21,6 +20,27 @@ async fn carregar_setores() -> Vec<String> {
         Err(_) => Vec::new(),
     }
 }
+
+// ---------- Inicio automatico (grava no registro com ASPAS) ----------
+
+#[cfg(windows)]
+fn habilitar_autostart() {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+    if let Ok(exe) = std::env::current_exe() {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok((run, _)) =
+            hkcu.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+        {
+            // Aspas obrigatorias por causa do espaco no caminho do usuario.
+            let valor = format!("\"{}\"", exe.display());
+            let _ = run.set_value("Convocacao", &valor);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn habilitar_autostart() {}
 
 // ---------- Configuracao do funcionario ----------
 
@@ -48,7 +68,8 @@ fn ler_config_arquivo(app: &AppHandle) -> Option<Config> {
 
 #[derive(Default)]
 struct AppState {
-    overlays: Mutex<Vec<String>>, // labels das janelas de alerta (pre-criadas)
+    overlays: Mutex<Vec<String>>,               // labels das janelas de alerta abertas
+    dados_alerta: Mutex<Option<serde_json::Value>>, // dados da chamada atual
 }
 
 // ---------- Comandos chamados pelo frontend ----------
@@ -77,24 +98,70 @@ fn salvar_config(app: AppHandle, nome: String, setor: String) -> Result<(), Stri
     let texto = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
     fs::write(caminho_config(&app), texto).map_err(|e| e.to_string())?;
 
-    // Liga o inicio automatico com o Windows.
-    let _ = app.autolaunch().enable();
+    habilitar_autostart();
 
-    // Reinicia o app: agora ja configurado, ele sobe conectado e com os alertas prontos.
+    // Reinicia: agora ja configurado, sobe conectado.
     app.restart()
 }
 
-/// Mostra o aviso em tela cheia em todos os monitores (janelas ja existem, so aparecem).
+/// Mostra o aviso em tela cheia em TODOS os monitores (janelas ja existem,
+/// so aparecem e sao reposicionadas na tela correta).
 #[tauri::command]
 fn mostrar_alerta(app: AppHandle, id: String, origem: String, motivo: String) {
-    let payload = serde_json::json!({ "id": id, "origem": origem, "motivo": motivo });
+    *app.state::<AppState>().dados_alerta.lock().unwrap() =
+        Some(serde_json::json!({ "id": id, "origem": origem, "motivo": motivo }));
+
     for label in overlay_labels(&app) {
         if let Some(w) = app.get_webview_window(&label) {
             let _ = w.show();
             let _ = w.set_focus();
         }
     }
+    let payload = serde_json::json!({ "id": id, "origem": origem, "motivo": motivo });
     let _ = app.emit("disparar-alerta", payload);
+}
+
+/// Cria (uma vez, no inicio) uma janela de alerta por monitor, posicionada
+/// em cada tela com coordenadas FISICAS (mais confiavel entre monitores).
+fn criar_overlays(app: &AppHandle) {
+    let base = app.get_webview_window("oculta");
+    let monitores = base
+        .as_ref()
+        .and_then(|w| w.available_monitors().ok())
+        .unwrap_or_default();
+
+    let mut labels = Vec::new();
+    for (i, m) in monitores.iter().enumerate() {
+        let pos = *m.position(); // PhysicalPosition<i32>
+        let tam = *m.size(); // PhysicalSize<u32>
+        let label = format!("alerta-{i}");
+
+        let build = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+            .title("Voce foi chamado!")
+            .visible(false)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .closable(false)
+            .minimizable(false)
+            .maximizable(false)
+            .build();
+
+        if let Ok(win) = build {
+            // Posiciona/redimensiona em coordenadas fisicas exatas do monitor.
+            let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+            let _ = win.set_size(tauri::PhysicalSize::new(tam.width, tam.height));
+            labels.push(label);
+        }
+    }
+    *app.state::<AppState>().overlays.lock().unwrap() = labels;
+}
+
+/// A janela de alerta busca os dados ao carregar.
+#[tauri::command]
+fn pegar_dados_alerta(app: AppHandle) -> Option<serde_json::Value> {
+    app.state::<AppState>().dados_alerta.lock().unwrap().clone()
 }
 
 /// O funcionario confirmou: avisa o servidor e esconde os avisos.
@@ -107,56 +174,11 @@ fn confirmar(app: AppHandle, id: String) {
             let _ = w.hide();
         }
     }
+    *app.state::<AppState>().dados_alerta.lock().unwrap() = None;
 }
 
-/// Retorna os labels das janelas de alerta (copia, sem segurar o lock).
 fn overlay_labels(app: &AppHandle) -> Vec<String> {
     app.state::<AppState>().overlays.lock().unwrap().clone()
-}
-
-// ---------- Auxiliares ----------
-
-fn criar_overlays(app: &AppHandle) {
-    // Usa a janela oculta para descobrir os monitores.
-    let base = app.get_webview_window("oculta");
-    let monitores = base
-        .as_ref()
-        .and_then(|w| w.available_monitors().ok())
-        .unwrap_or_default();
-
-    let mut labels = Vec::new();
-    for (i, m) in monitores.iter().enumerate() {
-        let escala = m.scale_factor();
-        let pos = m.position();
-        let tam = m.size();
-        let x = pos.x as f64 / escala;
-        let y = pos.y as f64 / escala;
-        let w = tam.width as f64 / escala;
-        let h = tam.height as f64 / escala;
-        let label = format!("alerta-{i}");
-
-        let ok = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-            .title("Voce foi chamado!")
-            .visible(false)
-            .decorations(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .resizable(false)
-            .closable(false)
-            .minimizable(false)
-            .maximizable(false)
-            .position(x, y)
-            .inner_size(w, h)
-            .build()
-            .is_ok();
-
-        if ok {
-            labels.push(label);
-        }
-    }
-
-    let state = app.state::<AppState>();
-    *state.overlays.lock().unwrap() = labels;
 }
 
 fn checar_atualizacao(app: AppHandle) {
@@ -179,10 +201,6 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
@@ -190,6 +208,7 @@ pub fn run() {
             ler_config,
             salvar_config,
             mostrar_alerta,
+            pegar_dados_alerta,
             confirmar,
             carregar_setores
         ])
@@ -217,9 +236,8 @@ pub fn run() {
                 .build(app)?;
 
             if config.is_some() {
-                // Ja configurado: liga inicio automatico, sobe a janela oculta (conexao)
-                // e deixa os avisos de tela cheia prontos (escondidos).
-                let _ = app.autolaunch().enable();
+                // Ja configurado: garante o inicio automatico (com aspas) e sobe a conexao.
+                habilitar_autostart();
 
                 WebviewWindowBuilder::new(&handle, "oculta", WebviewUrl::App("index.html".into()))
                     .title("convocacao")
@@ -243,7 +261,6 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // A janela oculta nunca fecha de verdade.
                 if window.label() == "oculta" {
                     api.prevent_close();
                 }

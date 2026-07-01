@@ -184,7 +184,9 @@
         invoke('confirmar', { id: id });
       });
 
-      // O backend dispara este evento quando mostra o alerta.
+      // Ao carregar, busca os dados da chamada atual (a janela e criada na hora).
+      invoke('pegar_dados_alerta').then(d => { if (d) iniciar(d); });
+      // E continua ouvindo, caso venha atualizacao.
       listen('disparar-alerta', e => iniciar(e.payload));
       listen('parar-alerta', () => parar());
     }
