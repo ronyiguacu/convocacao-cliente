@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <title>convocacao</title>
-  <script src="socket.io.min.js"></script>
+  <script src="supabase.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; }
     body { font-family: 'Segoe UI', sans-serif; overflow: hidden; }
 
-    /* ===== Tela de cadastro ===== */
+    /* ===== Tela de login/cadastro ===== */
     body.v-cadastro {
       background: #0f1117; color: #fff;
       display: flex; align-items: center; justify-content: center; height: 100vh;
@@ -31,9 +31,10 @@
       border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer;
     }
     .caixa button:hover { background: #ff8c1a; }
+    .caixa button:disabled { opacity: .6; cursor: default; }
     .erro { color: #f87171; font-size: 12px; text-align: center; display: none; }
 
-    /* ===== Tela de alerta (tela cheia) ===== */
+    /* ===== Tela de alerta (tela cheia) — INALTERADA ===== */
     body.v-alerta {
       background: #0a0a0a; color: #fff;
       display: flex; align-items: center; justify-content: center; height: 100vh;
@@ -81,56 +82,63 @@
   <div id="app"></div>
 
   <script>
-    const TAURI = window.__TAURI__;
+    // ===== Conexão com o banco central (Conta Cosmo) =====
+    const SUPABASE_URL  = 'https://eunkdomwdhhuppmpcken.supabase.co';
+    const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1bmtkb213ZGhodXBwbXBja2VuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMjk4ODgsImV4cCI6MjA5NzgwNTg4OH0.L1KBDrtlBdO4qRhsWaWcIdWa_VNXEDdg41RP6a3O4xo';
+    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
+      auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false }
+    });
+
+    const TAURI  = window.__TAURI__;
     const invoke = TAURI.core.invoke;
     const listen = TAURI.event.listen;
-    const SERVIDOR = 'https://painel-servidor.onrender.com';
-    const app = document.getElementById('app');
+    const app    = document.getElementById('app');
 
-    // ---------------- CADASTRO ----------------
-    function viewCadastro() {
+    // ---------------- LOGIN (Conta Cosmo) ----------------
+    // modo 'cadastro' = 1ª vez (grava flag e reinicia já conectado)
+    // modo 'oculta'   = PC migrado do sistema antigo (loga e conecta na hora)
+    function viewLogin(modo) {
       document.body.className = 'v-cadastro';
       app.innerHTML = `
         <div class="caixa">
-          <h2>Configuracao Inicial</h2>
-          <p>Preencha uma vez, nunca mais pergunta.</p>
+          <h2>Entrar</h2>
+          <p>Use sua Conta Cosmo (login único).</p>
           <div>
-            <label>Seu nome</label>
-            <input type="text" id="nome" placeholder="Ex: Joao" />
+            <label>E-mail</label>
+            <input type="email" id="email" placeholder="nome@iguacu.adm.br" />
           </div>
           <div>
-            <label>Seu setor</label>
-            <select id="setor"><option value="">Carregando...</option></select>
+            <label>Senha</label>
+            <input type="password" id="senha" placeholder="sua senha" />
           </div>
-          <p class="erro" id="erro">Preencha seu nome.</p>
-          <button id="btn">Salvar e entrar</button>
+          <p class="erro" id="erro">E-mail ou senha inválidos.</p>
+          <button id="btn">Entrar</button>
         </div>`;
 
-      (async () => {
-        try {
-          const setores = await invoke('carregar_setores');
-          if (setores && setores.length) {
-            document.getElementById('setor').innerHTML =
-              setores.map(s => `<option value="${s}">${s}</option>`).join('');
-          } else {
-            document.getElementById('setor').innerHTML = '<option value="Outro">Outro</option>';
-          }
-        } catch (e) {
-          document.getElementById('setor').innerHTML = '<option value="Outro">Outro</option>';
+      async function entrar() {
+        const email = document.getElementById('email').value.trim();
+        const senha = document.getElementById('senha').value;
+        const erro  = document.getElementById('erro');
+        erro.style.display = 'none';
+        if (!email || !senha) { erro.textContent = 'Preencha e-mail e senha.'; erro.style.display = 'block'; return; }
+        const btn = document.getElementById('btn');
+        btn.disabled = true; btn.textContent = 'Entrando...';
+        const { error } = await db.auth.signInWithPassword({ email, password: senha });
+        btn.disabled = false; btn.textContent = 'Entrar';
+        if (error) { erro.textContent = 'E-mail ou senha inválidos.'; erro.style.display = 'block'; return; }
+        if (modo === 'cadastro') {
+          // grava o "flag" de configurado → Rust reinicia e sobe a janela oculta já logada
+          await invoke('salvar_config', { nome: email, setor: '' });
+        } else {
+          try { const w = TAURI.window.getCurrentWindow(); await w.hide(); } catch (e) {}
+          conectarRealtime();
         }
-      })();
-
-      async function salvar() {
-        const nome = document.getElementById('nome').value.trim();
-        const setor = document.getElementById('setor').value;
-        if (!nome) { document.getElementById('erro').style.display = 'block'; return; }
-        await invoke('salvar_config', { nome, setor });
       }
-      document.getElementById('btn').addEventListener('click', salvar);
-      document.getElementById('nome').addEventListener('keydown', e => { if (e.key === 'Enter') salvar(); });
+      document.getElementById('btn').addEventListener('click', entrar);
+      document.getElementById('senha').addEventListener('keydown', e => { if (e.key === 'Enter') entrar(); });
     }
 
-    // ---------------- ALERTA ----------------
+    // ---------------- ALERTA (INALTERADO — o coração do sistema) ----------------
     function viewAlerta() {
       document.body.className = 'v-alerta';
       app.innerHTML = `
@@ -184,38 +192,65 @@
         invoke('confirmar', { id: id });
       });
 
-      // Ao carregar, busca os dados da chamada atual (a janela e criada na hora).
       invoke('pegar_dados_alerta').then(d => { if (d) iniciar(d); });
-      // E continua ouvindo, caso venha atualizacao.
       listen('disparar-alerta', e => iniciar(e.payload));
       listen('parar-alerta', () => parar());
     }
 
-    // ---------------- OCULTA (conexao com o servidor) ----------------
+    // ---------------- OCULTA (conexão via Supabase Realtime) ----------------
+    let mostrando = false;
+
+    // Mostra a chamada pendente mais antiga (uma de cada vez). O Rust cuida da
+    // janela tela cheia em todos os monitores + som + piscar; aqui só disparamos.
+    async function processarPendentes() {
+      if (mostrando) return;
+      let pend = [];
+      try { const r = await db.rpc('minhas_chamadas_pendentes'); pend = r.data || []; } catch (e) { return; }
+      if (!pend.length) return;
+      const c = pend[0]; // ordenadas por criada_em asc → a mais antiga primeiro (FIFO)
+      mostrando = true;
+      invoke('mostrar_alerta', { id: String(c.id), origem: c.convocado_por_nome || '', motivo: c.motivo || '' });
+    }
+
+    async function conectarRealtime() {
+      let fid = null;
+      try { const r = await db.rpc('meu_funcionario_id'); fid = r.data || null; } catch (e) {}
+
+      const cfg = { event: 'INSERT', schema: 'convocacao', table: 'chamadas' };
+      if (fid) cfg.filter = 'funcionario_id=eq.' + fid;
+      db.channel('minhas-convocacoes')
+        .on('postgres_changes', cfg, () => processarPendentes())
+        .subscribe();
+
+      // Confirmação vinda da janela de alerta (o Rust repassa este evento pra cá).
+      listen('confirmar-chamada', async (e) => {
+        mostrando = false;
+        try { await db.rpc('confirmar_chamada', { p_chamada_id: e.payload.id }); } catch (err) {}
+        setTimeout(processarPendentes, 300);
+      });
+
+      // Chamados perdidos enquanto o PC estava desligado.
+      processarPendentes();
+    }
+
     async function viewOculta() {
       document.body.style.background = 'transparent';
-      const config = await invoke('ler_config');
-      if (!config) return;
-
-      const socket = io(SERVIDOR, {
-        transports: ['websocket'], reconnection: true,
-        reconnectionAttempts: Infinity, reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000, timeout: 20000
-      });
-      socket.on('connect', () => socket.emit('identificar', { nome: config.nome, setor: config.setor }));
-      socket.on('chamada', d => invoke('mostrar_alerta', {
-        id: String(d.id), origem: d.origem || '', motivo: d.motivo || ''
-      }));
-      listen('confirmar-chamada', e => {
-        socket.emit('confirmado', { id: e.payload.id, funcionario: config.nome });
-      });
+      let sessao = null;
+      try { const r = await db.auth.getSession(); sessao = r.data.session; } catch (e) {}
+      if (!sessao) {
+        // PC ainda sem sessão (ex.: veio do sistema antigo): pede login e conecta.
+        try { const w = TAURI.window.getCurrentWindow(); await w.show(); await w.setFocus(); } catch (e) {}
+        viewLogin('oculta');
+        return;
+      }
+      conectarRealtime();
     }
 
     // ---------------- Roteamento ----------------
     (async () => {
       let view = 'oculta';
       try { view = await invoke('qual_view'); } catch (e) {}
-      if (view === 'cadastro') viewCadastro();
+      if (view === 'cadastro') viewLogin('cadastro');
       else if (view === 'alerta') viewAlerta();
       else viewOculta();
     })();

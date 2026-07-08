@@ -1,6 +1,6 @@
 {
   "name": "convocacao-cliente",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Cliente de convocacao (Tauri) - aviso em tela cheia para funcionarios",
   "private": true,
   "scripts": {
@@ -11,5 +11,8 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.0"
   }
 }

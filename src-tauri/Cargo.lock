@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "convocacao-cliente"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
