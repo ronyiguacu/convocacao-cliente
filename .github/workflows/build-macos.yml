@@ -8,7 +8,15 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-latest
+          - arch: x64
+            runner: macos-13
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Baixar codigo
         uses: actions/checkout@v4
@@ -34,5 +42,5 @@ jobs:
       - name: Enviar artefatos
         uses: actions/upload-artifact@v4
         with:
-          name: Convocacao-macOS
+          name: Convocacao-macOS-${{ matrix.arch }}
           path: src-tauri/target/release/bundle/dmg/*.dmg
