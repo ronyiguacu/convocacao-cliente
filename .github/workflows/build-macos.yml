@@ -1,0 +1,38 @@
+name: Build macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Ajustar build macOS manual
+        run: |
+          node -e "const fs=require('fs'); const p='src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.bundle.targets=['dmg']; delete c.bundle.createUpdaterArtifacts; fs.writeFileSync(p, JSON.stringify(c, null, 2));"
+
+      - name: Compilar macOS
+        run: npm run build
+
+      - name: Enviar artefatos
+        uses: actions/upload-artifact@v4
+        with:
+          name: Convocacao-macOS
+          path: src-tauri/target/release/bundle/dmg/*.dmg
