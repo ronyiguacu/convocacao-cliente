@@ -76,6 +76,31 @@
       90% { transform: translateX(5px); }
     }
     .shake { animation: shake 0.6s ease; }
+
+    body.v-diagnostico {
+      background: #10131a; color: #eef2f7; min-height: 100vh; overflow: auto;
+      padding: 22px;
+    }
+    .diag-wrap { max-width: 720px; margin: 0 auto; }
+    .diag-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+    .diag-head h1 { font-size: 20px; font-weight: 800; }
+    .diag-actions { display: flex; gap: 8px; }
+    .diag-actions button {
+      border: 1px solid #313846; background: #171c25; color: #eef2f7;
+      border-radius: 8px; padding: 9px 12px; font-weight: 700; cursor: pointer;
+    }
+    .diag-actions button.primary { background: #ff7a00; border-color: #ff7a00; color: #1a1000; }
+    .diag-card {
+      border: 1px solid #2b3342; background: #151a23; border-radius: 8px;
+      padding: 14px; margin-bottom: 12px;
+    }
+    .diag-card strong { display: block; font-size: 13px; color: #9aa4b2; margin-bottom: 4px; }
+    .diag-card span { display: block; font-size: 14px; overflow-wrap: anywhere; }
+    .diag-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .diag-row.ok { border-color: rgba(24,201,100,.45); }
+    .diag-row.warn { border-color: rgba(255,122,0,.55); }
+    .diag-row.err { border-color: rgba(248,113,113,.55); }
+    .diag-status { font-size: 13px; color: #9aa4b2; margin-bottom: 14px; }
   </style>
 </head>
 <body>
@@ -93,6 +118,22 @@
     const invoke = TAURI.core.invoke;
     const listen = TAURI.event.listen;
     const app    = document.getElementById('app');
+    const STATUS_KEY = 'convocacao_status';
+
+    function agora() { return new Date().toLocaleString('pt-BR'); }
+    function erroTexto(e) { return (e && (e.message || e.error_description || e.toString())) || 'erro desconhecido'; }
+    function html(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function lerStatusLocal() {
+      try { return JSON.parse(localStorage.getItem(STATUS_KEY) || '{}'); } catch (e) { return {}; }
+    }
+    function salvarStatus(parcial) {
+      try {
+        const atual = lerStatusLocal();
+        localStorage.setItem(STATUS_KEY, JSON.stringify(Object.assign(atual, parcial, { atualizado_em: agora() })));
+      } catch (e) {}
+    }
 
     // ---------------- LOGIN (Conta Cosmo) ----------------
     // modo 'cadastro' = 1ª vez (grava flag e reinicia já conectado)
@@ -126,6 +167,7 @@
         const { error } = await db.auth.signInWithPassword({ email, password: senha });
         btn.disabled = false; btn.textContent = 'Entrar';
         if (error) { erro.textContent = 'E-mail ou senha inválidos.'; erro.style.display = 'block'; return; }
+        salvarStatus({ email_configurado: email, ultimo_login: agora(), ultimo_erro_login: '' });
         if (modo === 'cadastro') {
           // grava o "flag" de configurado → Rust reinicia e sobe a janela oculta já logada
           await invoke('salvar_config', { nome: email, setor: '' });
@@ -199,38 +241,67 @@
 
     // ---------------- OCULTA (conexão via Supabase Realtime) ----------------
     let mostrando = false;
+    let realtimeConectado = false;
+    let pendentesTimer = null;
 
     // Mostra a chamada pendente mais antiga (uma de cada vez). O Rust cuida da
     // janela tela cheia em todos os monitores + som + piscar; aqui só disparamos.
     async function processarPendentes() {
       if (mostrando) return;
+      salvarStatus({ ultima_busca_pendentes: agora() });
       let pend = [];
-      try { const r = await db.rpc('minhas_chamadas_pendentes'); pend = r.data || []; } catch (e) { return; }
+      try {
+        const r = await db.rpc('minhas_chamadas_pendentes');
+        if (r.error) throw r.error;
+        pend = r.data || [];
+        salvarStatus({ pendentes: pend.length, ultimo_erro_pendentes: '' });
+      } catch (e) {
+        salvarStatus({ ultimo_erro_pendentes: erroTexto(e) });
+        return;
+      }
       if (!pend.length) return;
       const c = pend[0]; // ordenadas por criada_em asc → a mais antiga primeiro (FIFO)
       mostrando = true;
-      invoke('mostrar_alerta', { id: String(c.id), origem: c.convocado_por_nome || '', motivo: c.motivo || '' });
+      salvarStatus({ ultima_chamada_recebida: agora(), ultima_chamada_id: String(c.id || '') });
+      try {
+        await invoke('mostrar_alerta', { id: String(c.id), origem: c.convocado_por_nome || '', motivo: c.motivo || '' });
+        salvarStatus({ ultimo_erro_alerta: '' });
+      } catch (e) {
+        mostrando = false;
+        salvarStatus({ ultimo_erro_alerta: erroTexto(e) });
+      }
     }
 
     async function conectarRealtime() {
+      if (realtimeConectado) { processarPendentes(); return; }
+      realtimeConectado = true;
       let fid = null;
-      try { const r = await db.rpc('meu_funcionario_id'); fid = r.data || null; } catch (e) {}
+      try {
+        const r = await db.rpc('meu_funcionario_id');
+        if (r.error) throw r.error;
+        fid = r.data || null;
+        salvarStatus({ funcionario_id: fid || '', ultimo_erro_funcionario: '' });
+      } catch (e) {
+        salvarStatus({ funcionario_id: '', ultimo_erro_funcionario: erroTexto(e) });
+      }
 
       const cfg = { event: 'INSERT', schema: 'convocacao', table: 'chamadas' };
       if (fid) cfg.filter = 'funcionario_id=eq.' + fid;
       db.channel('minhas-convocacoes')
         .on('postgres_changes', cfg, () => processarPendentes())
-        .subscribe();
+        .subscribe(status => salvarStatus({ realtime: status }));
 
       // Confirmação vinda da janela de alerta (o Rust repassa este evento pra cá).
       listen('confirmar-chamada', async (e) => {
         mostrando = false;
         try { await db.rpc('confirmar_chamada', { p_chamada_id: e.payload.id }); } catch (err) {}
+        salvarStatus({ ultima_confirmacao: agora(), ultima_chamada_id: e.payload.id || '' });
         setTimeout(processarPendentes, 300);
       });
 
       // Chamados perdidos enquanto o PC estava desligado.
       processarPendentes();
+      if (!pendentesTimer) pendentesTimer = setInterval(processarPendentes, 15000);
     }
 
     async function viewOculta() {
@@ -238,12 +309,112 @@
       let sessao = null;
       try { const r = await db.auth.getSession(); sessao = r.data.session; } catch (e) {}
       if (!sessao) {
+        salvarStatus({ sessao: 'sem sessao', email_sessao: '', realtime: 'nao iniciado' });
         // PC ainda sem sessão (ex.: veio do sistema antigo): pede login e conecta.
         try { const w = TAURI.window.getCurrentWindow(); await w.show(); await w.setFocus(); } catch (e) {}
         viewLogin('oculta');
         return;
       }
+      salvarStatus({ sessao: 'ativa', email_sessao: (sessao.user && sessao.user.email) || '' });
       conectarRealtime();
+    }
+
+    // ---------------- DIAGNOSTICO ----------------
+    function viewDiagnostico() {
+      document.body.className = 'v-diagnostico';
+      app.innerHTML = `
+        <div class="diag-wrap">
+          <div class="diag-head">
+            <h1>Diagnostico Convocacao</h1>
+            <div class="diag-actions">
+              <button type="button" class="primary" id="diagAtualizar">Atualizar</button>
+              <button type="button" id="diagFechar">Fechar</button>
+            </div>
+          </div>
+          <p class="diag-status" id="diagStatus">Verificando...</p>
+          <div class="diag-grid" id="diagLista"></div>
+        </div>`;
+
+      document.getElementById('diagAtualizar').addEventListener('click', executarDiagnostico);
+      document.getElementById('diagFechar').addEventListener('click', async () => {
+        try { await TAURI.window.getCurrentWindow().close(); } catch (e) {}
+      });
+      executarDiagnostico();
+    }
+
+    function diagLinha(titulo, valor, tipo) {
+      return '<div class="diag-card diag-row ' + (tipo || '') + '"><strong>' + html(titulo) + '</strong><span>' + html(valor || '—') + '</span></div>';
+    }
+
+    async function testarRealtimeDiag(fid) {
+      return new Promise(resolve => {
+        const cfg = { event: 'INSERT', schema: 'convocacao', table: 'chamadas' };
+        if (fid) cfg.filter = 'funcionario_id=eq.' + fid;
+        const canal = db.channel('diag-convocacao-' + Date.now()).on('postgres_changes', cfg, () => {});
+        let finalizado = false;
+        const terminar = status => {
+          if (finalizado) return;
+          finalizado = true;
+          try { db.removeChannel(canal); } catch (e) {}
+          resolve(status);
+        };
+        const timer = setTimeout(() => terminar('sem resposta em 5s'), 5000);
+        canal.subscribe(status => {
+          if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            clearTimeout(timer);
+            terminar(status);
+          }
+        });
+      });
+    }
+
+    async function executarDiagnostico() {
+      const lista = document.getElementById('diagLista');
+      const status = document.getElementById('diagStatus');
+      status.textContent = 'Verificando...';
+      lista.innerHTML = '';
+      const linhas = [];
+      const local = lerStatusLocal();
+
+      let cfgLocal = null;
+      try { cfgLocal = await invoke('ler_config'); } catch (e) {}
+      linhas.push(diagLinha('Configuracao local', cfgLocal && cfgLocal.nome ? cfgLocal.nome : 'nao encontrada', cfgLocal && cfgLocal.nome ? 'ok' : 'warn'));
+
+      let sessao = null;
+      try {
+        const r = await db.auth.getSession();
+        sessao = r.data.session;
+        linhas.push(diagLinha('Sessao Supabase', sessao ? ((sessao.user && sessao.user.email) || 'ativa') : 'sem sessao', sessao ? 'ok' : 'err'));
+      } catch (e) {
+        linhas.push(diagLinha('Sessao Supabase', erroTexto(e), 'err'));
+      }
+
+      let fid = null;
+      try {
+        const r = await db.rpc('meu_funcionario_id');
+        if (r.error) throw r.error;
+        fid = r.data || null;
+        linhas.push(diagLinha('Funcionario encontrado', fid ? fid : 'nao encontrado', fid ? 'ok' : 'err'));
+      } catch (e) {
+        linhas.push(diagLinha('Funcionario encontrado', erroTexto(e), 'err'));
+      }
+
+      try {
+        const r = await db.rpc('minhas_chamadas_pendentes');
+        if (r.error) throw r.error;
+        const pend = r.data || [];
+        linhas.push(diagLinha('Chamadas pendentes', String(pend.length), pend.length ? 'warn' : 'ok'));
+        if (pend[0]) linhas.push(diagLinha('Primeira pendente', 'id ' + pend[0].id + ' / ' + (pend[0].convocado_por_nome || 'sem origem'), 'warn'));
+      } catch (e) {
+        linhas.push(diagLinha('Chamadas pendentes', erroTexto(e), 'err'));
+      }
+
+      const rt = await testarRealtimeDiag(fid);
+      linhas.push(diagLinha('Realtime Supabase', rt, rt === 'SUBSCRIBED' ? 'ok' : 'err'));
+
+      linhas.push(diagLinha('Ultimo status salvo', JSON.stringify(local), ''));
+      lista.innerHTML = linhas.join('');
+      status.textContent = 'Atualizado em ' + agora();
     }
 
     // ---------------- Roteamento ----------------
@@ -252,6 +423,7 @@
       try { view = await invoke('qual_view'); } catch (e) {}
       if (view === 'cadastro') viewLogin('cadastro');
       else if (view === 'alerta') viewAlerta();
+      else if (view === 'diagnostico') viewDiagnostico();
       else viewOculta();
     })();
   </script>

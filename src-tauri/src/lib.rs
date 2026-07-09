@@ -68,7 +68,7 @@ fn ler_config_arquivo(app: &AppHandle) -> Option<Config> {
 
 #[derive(Default)]
 struct AppState {
-    overlays: Mutex<Vec<String>>,               // labels das janelas de alerta abertas
+    overlays: Mutex<Vec<String>>, // labels das janelas de alerta abertas
     dados_alerta: Mutex<Option<serde_json::Value>>, // dados da chamada atual
 }
 
@@ -80,6 +80,8 @@ fn qual_view(window: WebviewWindow) -> String {
     let l = window.label();
     if l == "cadastro" {
         "cadastro".to_string()
+    } else if l == "diagnostico" {
+        "diagnostico".to_string()
     } else if l.starts_with("alerta") {
         "alerta".to_string()
     } else {
@@ -185,11 +187,32 @@ fn checar_atualizacao(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         if let Ok(updater) = app.updater() {
             if let Ok(Some(update)) = updater.check().await {
-                let _ = update.download_and_install(|_, _| {}, || {}).await;
-                app.restart();
+                if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
+                    app.restart();
+                }
             }
         }
     });
+}
+
+fn abrir_diagnostico(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("diagnostico") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return;
+    }
+
+    if let Ok(w) =
+        WebviewWindowBuilder::new(app, "diagnostico", WebviewUrl::App("index.html".into()))
+            .title("Diagnostico Convocacao")
+            .inner_size(560.0, 620.0)
+            .resizable(true)
+            .center()
+            .build()
+    {
+        let _ = w.set_focus();
+    }
 }
 
 // ---------- Ponto de entrada ----------
@@ -221,17 +244,26 @@ pub fn run() {
                 Some(c) => format!("Logado como: {}", c.nome),
                 None => "Nao configurado".to_string(),
             };
-            let item_nome = MenuItemBuilder::with_id("nome", rotulo).enabled(false).build(app)?;
+            let item_nome = MenuItemBuilder::with_id("nome", rotulo)
+                .enabled(false)
+                .build(app)?;
+            let item_diag = MenuItemBuilder::with_id("diagnostico", "Diagnostico").build(app)?;
             let item_sair = MenuItemBuilder::with_id("sair", "Sair").build(app)?;
-            let menu = MenuBuilder::new(app).item(&item_nome).separator().item(&item_sair).build()?;
+            let menu = MenuBuilder::new(app)
+                .item(&item_nome)
+                .separator()
+                .item(&item_diag)
+                .separator()
+                .item(&item_sair)
+                .build()?;
             TrayIconBuilder::with_id("principal")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Sistema de Convocacao")
                 .menu(&menu)
-                .on_menu_event(|app, event| {
-                    if event.id().as_ref() == "sair" {
-                        app.exit(0);
-                    }
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "diagnostico" => abrir_diagnostico(app),
+                    "sair" => app.exit(0),
+                    _ => {}
                 })
                 .build(app)?;
 
@@ -249,12 +281,16 @@ pub fn run() {
                 checar_atualizacao(handle.clone());
             } else {
                 // Primeira vez: abre a tela de cadastro (visivel).
-                WebviewWindowBuilder::new(&handle, "cadastro", WebviewUrl::App("index.html".into()))
-                    .title("Configuracao inicial")
-                    .inner_size(380.0, 340.0)
-                    .resizable(false)
-                    .center()
-                    .build()?;
+                WebviewWindowBuilder::new(
+                    &handle,
+                    "cadastro",
+                    WebviewUrl::App("index.html".into()),
+                )
+                .title("Configuracao inicial")
+                .inner_size(380.0, 340.0)
+                .resizable(false)
+                .center()
+                .build()?;
             }
 
             Ok(())
