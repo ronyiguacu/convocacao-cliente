@@ -121,7 +121,7 @@ jobs:
           }
 
           const data = fs.existsSync(latestPath)
-            ? JSON.parse(fs.readFileSync(latestPath, 'utf8'))
+            ? JSON.parse(fs.readFileSync(latestPath, 'utf8').replace(/^\uFEFF/, ''))
             : { version: '', notes: `Atualizacao ${tag}`, pub_date: new Date().toISOString(), platforms: {} };
 
           data.platforms = data.platforms || {};
