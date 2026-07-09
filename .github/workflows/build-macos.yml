@@ -2,9 +2,14 @@ name: Build macOS
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag da release para publicar os updates macOS (ex: v1.0.5). Deixe vazio para apenas gerar artefatos."
+        required: false
+        type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-macos:
@@ -17,6 +22,9 @@ jobs:
           - arch: x64
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Baixar codigo
         uses: actions/checkout@v4
@@ -32,15 +40,112 @@ jobs:
       - name: Instalar dependencias
         run: npm install
 
-      - name: Ajustar build macOS manual
+      - name: Ajustar bundle macOS com updater
         run: |
-          node -e "const fs=require('fs'); const p='src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.bundle.targets=['dmg']; delete c.bundle.createUpdaterArtifacts; fs.writeFileSync(p, JSON.stringify(c, null, 2));"
+          node -e "const fs=require('fs'); const p='src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.bundle.targets=['dmg']; c.bundle.createUpdaterArtifacts=true; fs.writeFileSync(p, JSON.stringify(c, null, 2));"
 
       - name: Compilar macOS
         run: npm run build
+
+      - name: Preparar artefatos
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          mkdir -p dist
+          DMG=$(find src-tauri/target/release/bundle/dmg -name "*.dmg" -print -quit)
+          UPDATE=$(find src-tauri/target/release/bundle/macos -name "*.app.tar.gz" -print -quit)
+          SIG="${UPDATE}.sig"
+          test -f "$DMG"
+          test -f "$UPDATE"
+          test -f "$SIG"
+          cp "$DMG" "dist/Convocacao_${VERSION}_${{ matrix.arch }}.dmg"
+          cp "$UPDATE" "dist/Convocacao_${VERSION}_${{ matrix.arch }}.app.tar.gz"
+          cp "$SIG" "dist/Convocacao_${VERSION}_${{ matrix.arch }}.app.tar.gz.sig"
 
       - name: Enviar artefatos
         uses: actions/upload-artifact@v4
         with:
           name: Convocacao-macOS-${{ matrix.arch }}
-          path: src-tauri/target/release/bundle/dmg/*.dmg
+          path: dist/*
+          if-no-files-found: error
+
+  publicar-release:
+    needs: build-macos
+    if: ${{ inputs.tag != '' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+      PRODUCT: Convocacao
+    steps:
+      - name: Baixar artefatos macOS
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Garantir release
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Convocacao $TAG" --notes "Atualizacao automatica do sistema de convocacao."
+
+      - name: Baixar latest.json atual
+        run: |
+          mkdir -p latest
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir latest --clobber || true
+
+      - name: Publicar artefatos macOS
+        run: |
+          mapfile -t FILES < <(find artifacts -type f)
+          gh release upload "$TAG" "${FILES[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Atualizar latest.json com macOS
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const repo = process.env.GITHUB_REPOSITORY;
+          const tag = process.env.TAG;
+          const product = process.env.PRODUCT;
+          const latestPath = path.join('latest', 'latest.json');
+
+          function walk(dir) {
+            return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+              const full = path.join(dir, entry.name);
+              return entry.isDirectory() ? walk(full) : [full];
+            });
+          }
+
+          const updates = walk('artifacts').filter((file) => file.endsWith('.app.tar.gz'));
+          if (updates.length === 0) {
+            throw new Error('Nenhum pacote .app.tar.gz encontrado.');
+          }
+
+          const data = fs.existsSync(latestPath)
+            ? JSON.parse(fs.readFileSync(latestPath, 'utf8'))
+            : { version: '', notes: `Atualizacao ${tag}`, pub_date: new Date().toISOString(), platforms: {} };
+
+          data.platforms = data.platforms || {};
+
+          for (const updatePath of updates) {
+            const fileName = path.basename(updatePath);
+            const match = fileName.match(new RegExp(`^${product}_(.+)_(aarch64|x64)\\.app\\.tar\\.gz$`));
+            if (!match) {
+              throw new Error(`Nome inesperado: ${fileName}`);
+            }
+
+            const [, version, arch] = match;
+            const platform = arch === 'x64' ? 'darwin-x86_64' : 'darwin-aarch64';
+            const signature = fs.readFileSync(`${updatePath}.sig`, 'utf8').trim();
+
+            data.version = data.version || version;
+            data.platforms[platform] = {
+              signature,
+              url: `https://github.com/${repo}/releases/download/${tag}/${fileName}`
+            };
+          }
+
+          fs.writeFileSync('latest.json', JSON.stringify(data, null, 2));
+          NODE
+
+      - name: Publicar latest.json
+        run: gh release upload "$TAG" latest.json --repo "$GITHUB_REPOSITORY" --clobber
