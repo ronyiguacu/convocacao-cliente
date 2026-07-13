@@ -39,7 +39,33 @@ fn habilitar_autostart() {
     }
 }
 
-#[cfg(not(windows))]
+/// macOS: grava um LaunchAgent — o app passa a iniciar junto com o sistema
+/// (antes era uma funcao vazia: no Mac o app simplesmente nao subia sozinho).
+#[cfg(target_os = "macos")]
+fn habilitar_autostart() {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(home) = std::env::var_os("HOME") {
+            let dir = std::path::Path::new(&home).join("Library/LaunchAgents");
+            let _ = fs::create_dir_all(&dir);
+            let plist = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.iguacu.convocacao</string>
+    <key>ProgramArguments</key><array><string>{}</string></array>
+    <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+"#,
+                exe.display()
+            );
+            let _ = fs::write(dir.join("com.iguacu.convocacao.plist"), plist);
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn habilitar_autostart() {}
 
 // ---------- Configuracao do funcionario ----------
@@ -110,23 +136,33 @@ fn salvar_config(app: AppHandle, nome: String, setor: String) -> Result<(), Stri
 /// so aparecem e sao reposicionadas na tela correta).
 #[tauri::command]
 fn mostrar_alerta(app: AppHandle, id: String, origem: String, motivo: String) {
-    *app.state::<AppState>().dados_alerta.lock().unwrap() =
-        Some(serde_json::json!({ "id": id, "origem": origem, "motivo": motivo }));
-
-    for label in overlay_labels(&app) {
-        if let Some(w) = app.get_webview_window(&label) {
-            let _ = w.show();
-            let _ = w.set_focus();
-        }
-    }
     let payload = serde_json::json!({ "id": id, "origem": origem, "motivo": motivo });
-    let _ = app.emit("disparar-alerta", payload);
+    *app.state::<AppState>().dados_alerta.lock().unwrap() = Some(payload.clone());
+
+    // Tudo na thread principal (obrigatorio no macOS pra criar/mexer em janela).
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        // Re-enumera os monitores AGORA — resolve notebook que plugou/desplugou
+        // monitor depois que o app iniciou (antes as janelas eram criadas so no boot).
+        garantir_overlays(&app2);
+        for label in overlay_labels(&app2) {
+            if let Some(w) = app2.get_webview_window(&label) {
+                let _ = w.show();
+                let _ = w.set_always_on_top(true);
+                let _ = w.set_focus();
+            }
+        }
+        let _ = app2.emit("disparar-alerta", payload);
+    });
 }
 
-/// Cria (uma vez, no inicio) uma janela de alerta por monitor, posicionada
-/// em cada tela com coordenadas FISICAS (mais confiavel entre monitores).
-fn criar_overlays(app: &AppHandle) {
-    let base = app.get_webview_window("oculta");
+/// Cria OU reposiciona uma janela de alerta por monitor, conforme os monitores
+/// que existem NESTE momento (chamada no inicio e a cada alerta). Coordenadas
+/// FISICAS (mais confiavel entre monitores).
+fn garantir_overlays(app: &AppHandle) {
+    let base = app
+        .get_webview_window("oculta")
+        .or_else(|| app.get_webview_window("cadastro"));
     let monitores = base
         .as_ref()
         .and_then(|w| w.available_monitors().ok())
@@ -137,6 +173,14 @@ fn criar_overlays(app: &AppHandle) {
         let pos = *m.position(); // PhysicalPosition<i32>
         let tam = *m.size(); // PhysicalSize<u32>
         let label = format!("alerta-{i}");
+
+        // Ja existe? So reposiciona nas coordenadas atuais do monitor.
+        if let Some(win) = app.get_webview_window(&label) {
+            let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+            let _ = win.set_size(tauri::PhysicalSize::new(tam.width, tam.height));
+            labels.push(label);
+            continue;
+        }
 
         let build = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
             .title("Voce foi chamado!")
@@ -151,13 +195,33 @@ fn criar_overlays(app: &AppHandle) {
             .build();
 
         if let Ok(win) = build {
-            // Posiciona/redimensiona em coordenadas fisicas exatas do monitor.
             let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = win.set_size(tauri::PhysicalSize::new(tam.width, tam.height));
             labels.push(label);
         }
     }
+
+    // Janelas de monitores que nao existem mais: esconde (evita "alerta fantasma").
+    let anteriores = app.state::<AppState>().overlays.lock().unwrap().clone();
+    for velho in anteriores {
+        if !labels.contains(&velho) {
+            if let Some(w) = app.get_webview_window(&velho) {
+                let _ = w.hide();
+            }
+        }
+    }
+
     *app.state::<AppState>().overlays.lock().unwrap() = labels;
+}
+
+/// Batimento do lado nativo: a cada 20s emite um evento pro JS buscar pendencias.
+/// O JS suspenso pelo App Nap (macOS) acorda quando recebe evento do Rust —
+/// e uma thread nativa nao e congelada como os timers do webview.
+fn iniciar_batimento(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(20));
+        let _ = app.emit("verificar-pendentes", ());
+    });
 }
 
 /// A janela de alerta busca os dados ao carregar.
@@ -277,7 +341,8 @@ pub fn run() {
                     .skip_taskbar(true)
                     .build()?;
 
-                criar_overlays(&handle);
+                garantir_overlays(&handle);
+                iniciar_batimento(handle.clone());
                 checar_atualizacao(handle.clone());
             } else {
                 // Primeira vez: abre a tela de cadastro (visivel).

@@ -114,6 +114,15 @@
       auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false }
     });
 
+    // O "crachá" (token) renova a cada hora. Sem repassar o token novo pro canal
+    // de tempo real, o websocket continua com o velho e o servidor derruba em
+    // silêncio (~1-2h depois os chamados param de chegar). Este bloco corrige isso.
+    db.auth.onAuthStateChange((_evento, sessao) => {
+      try {
+        if (sessao && sessao.access_token) db.realtime.setAuth(sessao.access_token);
+      } catch (e) {}
+    });
+
     const TAURI  = window.__TAURI__;
     const invoke = TAURI.core.invoke;
     const listen = TAURI.event.listen;
@@ -243,6 +252,35 @@
     let mostrando = false;
     let realtimeConectado = false;
     let pendentesTimer = null;
+    let canalAtual = null;
+    let reconexaoTimer = null;
+    let reconexaoTentativas = 0;
+
+    // Assina o canal de tempo real e — o que faltava — RECONECTA sozinho quando
+    // ele cai (erro, timeout, fechado), com espera crescente (2s, 4s, 8s... máx 30s).
+    function assinarCanal(fid) {
+      if (canalAtual) { try { db.removeChannel(canalAtual); } catch (e) {} }
+      const cfg = { event: 'INSERT', schema: 'convocacao', table: 'chamadas' };
+      if (fid) cfg.filter = 'funcionario_id=eq.' + fid;
+      const canal = db.channel('minhas-convocacoes-' + Date.now())
+        .on('postgres_changes', cfg, () => processarPendentes());
+      canalAtual = canal;
+      canal.subscribe(status => {
+        if (canal !== canalAtual) return; // canal antigo descartado: ignora
+        salvarStatus({ realtime: status });
+        if (status === 'SUBSCRIBED') {
+          reconexaoTentativas = 0;
+          processarPendentes(); // pega o que chegou enquanto estava desconectado
+          return;
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          if (reconexaoTimer) clearTimeout(reconexaoTimer);
+          const espera = Math.min(30000, 2000 * Math.pow(2, reconexaoTentativas++));
+          salvarStatus({ realtime: status + ' (reconectando em ' + Math.round(espera / 1000) + 's)' });
+          reconexaoTimer = setTimeout(() => assinarCanal(fid), espera);
+        }
+      });
+    }
 
     // Mostra a chamada pendente mais antiga (uma de cada vez). O Rust cuida da
     // janela tela cheia em todos os monitores + som + piscar; aqui só disparamos.
@@ -285,19 +323,31 @@
         salvarStatus({ funcionario_id: '', ultimo_erro_funcionario: erroTexto(e) });
       }
 
-      const cfg = { event: 'INSERT', schema: 'convocacao', table: 'chamadas' };
-      if (fid) cfg.filter = 'funcionario_id=eq.' + fid;
-      db.channel('minhas-convocacoes')
-        .on('postgres_changes', cfg, () => processarPendentes())
-        .subscribe(status => salvarStatus({ realtime: status }));
+      assinarCanal(fid);
 
       // Confirmação vinda da janela de alerta (o Rust repassa este evento pra cá).
+      // Se falhar (ex.: token acabou de virar), tenta de novo em 3s — senão a
+      // chamada fica pendente no banco e o alerta reapareceria.
       listen('confirmar-chamada', async (e) => {
         mostrando = false;
-        try { await db.rpc('confirmar_chamada', { p_chamada_id: e.payload.id }); } catch (err) {}
-        salvarStatus({ ultima_confirmacao: agora(), ultima_chamada_id: e.payload.id || '' });
+        const idChamada = e.payload.id;
+        try {
+          const r = await db.rpc('confirmar_chamada', { p_chamada_id: idChamada });
+          if (r.error) throw r.error;
+          salvarStatus({ ultimo_erro_confirmacao: '' });
+        } catch (err) {
+          salvarStatus({ ultimo_erro_confirmacao: erroTexto(err) });
+          setTimeout(async () => {
+            try { await db.rpc('confirmar_chamada', { p_chamada_id: idChamada }); } catch (e2) {}
+          }, 3000);
+        }
+        salvarStatus({ ultima_confirmacao: agora(), ultima_chamada_id: idChamada || '' });
         setTimeout(processarPendentes, 300);
       });
+
+      // Batimento vindo do lado nativo (Rust): acorda o app a cada 20s pra buscar
+      // pendências mesmo quando o sistema congela os timers do JS (App Nap do macOS).
+      listen('verificar-pendentes', () => processarPendentes());
 
       // Chamados perdidos enquanto o PC estava desligado.
       processarPendentes();
