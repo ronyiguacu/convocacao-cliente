@@ -147,6 +147,7 @@ fn mostrar_alerta(app: AppHandle, id: String, origem: String, motivo: String) {
         garantir_overlays(&app2);
         for label in overlay_labels(&app2) {
             if let Some(w) = app2.get_webview_window(&label) {
+                let _ = w.set_visible_on_all_workspaces(true);
                 let _ = w.show();
                 let _ = w.set_always_on_top(true);
                 let _ = w.set_focus();
@@ -178,6 +179,7 @@ fn garantir_overlays(app: &AppHandle) {
         if let Some(win) = app.get_webview_window(&label) {
             let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = win.set_size(tauri::PhysicalSize::new(tam.width, tam.height));
+            let _ = win.set_visible_on_all_workspaces(true);
             labels.push(label);
             continue;
         }
@@ -197,6 +199,7 @@ fn garantir_overlays(app: &AppHandle) {
         if let Ok(win) = build {
             let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = win.set_size(tauri::PhysicalSize::new(tam.width, tam.height));
+            let _ = win.set_visible_on_all_workspaces(true);
             labels.push(label);
         }
     }
@@ -219,7 +222,7 @@ fn garantir_overlays(app: &AppHandle) {
 /// e uma thread nativa nao e congelada como os timers do webview.
 fn iniciar_batimento(app: AppHandle) {
     std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(20));
+        std::thread::sleep(std::time::Duration::from_secs(5));
         let _ = app.emit("verificar-pendentes", ());
     });
 }
