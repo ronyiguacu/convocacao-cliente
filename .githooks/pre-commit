@@ -1,0 +1,35 @@
+#!/bin/sh
+# Barra segredo antes de entrar no historico do git.
+# Ativar num clone novo:  git config core.hooksPath .githooks
+# Falso positivo?         git commit --no-verify
+
+falhou=0
+
+# 1) arquivos que nunca devem ser commitados
+for f in $(git diff --cached --name-only --diff-filter=ACM); do
+  case "$f" in
+    .env|.env.*|*/.env|*/.env.*)
+      echo "BLOQUEADO: $f nao deve ser commitado (segredo fica fora do git)."
+      falhou=1
+      ;;
+  esac
+done
+
+# 2) padroes de segredo nas linhas ADICIONADAS
+padroes='sbp_[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|eyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}'
+
+achados=$(git diff --cached -U0 | grep -E '^\+' | grep -vE '^\+\+\+' | grep -EIn "$padroes")
+
+if [ -n "$achados" ]; then
+  echo "BLOQUEADO: parece segredo nas linhas adicionadas:"
+  echo "$achados" | head -n 10
+  falhou=1
+fi
+
+if [ "$falhou" -ne 0 ]; then
+  echo ""
+  echo "Nada foi commitado. Tire o segredo, ou use --no-verify se for falso positivo."
+  exit 1
+fi
+
+exit 0
