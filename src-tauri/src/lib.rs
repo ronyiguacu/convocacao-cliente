@@ -136,6 +136,7 @@ fn salvar_config(app: AppHandle, nome: String, setor: String) -> Result<(), Stri
 /// so aparecem e sao reposicionadas na tela correta).
 #[tauri::command]
 fn mostrar_alerta(app: AppHandle, id: String, origem: String, motivo: String) {
+    acender_tela();
     let payload = serde_json::json!({ "id": id, "origem": origem, "motivo": motivo });
     *app.state::<AppState>().dados_alerta.lock().unwrap() = Some(payload.clone());
 
@@ -226,6 +227,46 @@ fn iniciar_batimento(app: AppHandle) {
         let _ = app.emit("verificar-pendentes", ());
     });
 }
+
+// ---------- Mac acordado ----------
+//
+// Mac em repouso nao recebe convocacao na hora: a chamada so aparece quando ele acorda.
+
+/// Roda o `caffeinate` do proprio macOS e recolhe o processo quando ele sair (sem zumbi).
+#[cfg(target_os = "macos")]
+fn caffeinate(args: &[&str]) {
+    match std::process::Command::new("/usr/bin/caffeinate").args(args).spawn() {
+        Ok(mut filho) => {
+            std::thread::spawn(move || {
+                let _ = filho.wait();
+            });
+        }
+        Err(e) => eprintln!("caffeinate {args:?}: {e}"),
+    }
+}
+
+/// Enquanto a Convocacao estiver aberta e o Mac estiver NA TOMADA, ele nao entra em repouso.
+/// `-s` so vale no adaptador de energia (na bateria nao faz nada, entao nao drena notebook) e
+/// a tela continua apagando normalmente. `-w <pid>` faz o caffeinate sair junto com o app: se
+/// a Convocacao fechar ou travar, o Mac volta a dormir como sempre.
+#[cfg(target_os = "macos")]
+fn manter_mac_acordado() {
+    let pid = std::process::id().to_string();
+    caffeinate(&["-s", "-w", &pid]);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn manter_mac_acordado() {}
+
+/// Chegou convocacao: acende a tela, se ela tinha apagado por inatividade (o alerta estaria
+/// la, mas com o monitor desligado). `-u` e o mesmo que mexer no mouse, por 10 segundos.
+#[cfg(target_os = "macos")]
+fn acender_tela() {
+    caffeinate(&["-u", "-t", "10"]);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn acender_tela() {}
 
 /// A janela de alerta busca os dados ao carregar.
 #[tauri::command]
@@ -346,6 +387,7 @@ pub fn run() {
 
                 garantir_overlays(&handle);
                 iniciar_batimento(handle.clone());
+                manter_mac_acordado();
                 checar_atualizacao(handle.clone());
             } else {
                 // Primeira vez: abre a tela de cadastro (visivel).

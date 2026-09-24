@@ -1,6 +1,6 @@
 [package]
 name = "convocacao-cliente"
-version = "1.0.8"
+version = "1.0.9"
 description = "Cliente de convocacao"
 authors = ["rony"]
 edition = "2021"
