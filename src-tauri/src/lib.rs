@@ -9,6 +9,14 @@ use tauri::{
 };
 use tauri_plugin_updater::UpdaterExt as _;
 
+// WebView2 (Windows) sem QUIC/HTTP3 — 1.0.10. Rony, 06/10/2026: num computador o app do Cosmo
+// parou em ERR_QUIC_PROTOCOL_ERROR. O Supabase e o Cloudflare oferecem HTTP/3 (QUIC, UDP 443),
+// e antivírus, firewall ou a rede de alguns computadores atrapalham esse protocolo: a busca de
+// chamadas falharia calada. Com isto tudo vai por HTTPS comum. Os três primeiros são o padrão do
+// wry, que este argumento substitui. TODA janela tem que usar ARGS_WEBVIEW2: janelas do mesmo
+// app com argumentos diferentes não abrem (o WebView2 recusa) — e a do alerta é uma delas.
+const ARGS_WEBVIEW2: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-quic";
+
 const SERVIDOR: &str = "https://painel-servidor.onrender.com";
 
 /// Busca os setores no servidor pelo lado nativo (sem restricao de CORS do navegador).
@@ -186,6 +194,7 @@ fn garantir_overlays(app: &AppHandle) {
         }
 
         let build = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+            .additional_browser_args(ARGS_WEBVIEW2)
             .title("Voce foi chamado!")
             .visible(false)
             .decorations(false)
@@ -313,6 +322,7 @@ fn abrir_diagnostico(app: &AppHandle) {
 
     if let Ok(w) =
         WebviewWindowBuilder::new(app, "diagnostico", WebviewUrl::App("index.html".into()))
+            .additional_browser_args(ARGS_WEBVIEW2)
             .title("Diagnostico Convocacao")
             .inner_size(560.0, 620.0)
             .resizable(true)
@@ -380,6 +390,7 @@ pub fn run() {
                 habilitar_autostart();
 
                 WebviewWindowBuilder::new(&handle, "oculta", WebviewUrl::App("index.html".into()))
+                    .additional_browser_args(ARGS_WEBVIEW2)
                     .title("convocacao")
                     .visible(false)
                     .skip_taskbar(true)
@@ -396,6 +407,7 @@ pub fn run() {
                     "cadastro",
                     WebviewUrl::App("index.html".into()),
                 )
+                .additional_browser_args(ARGS_WEBVIEW2)
                 .title("Configuracao inicial")
                 .inner_size(380.0, 340.0)
                 .resizable(false)
