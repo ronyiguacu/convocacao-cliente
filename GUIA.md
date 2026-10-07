@@ -62,6 +62,27 @@ Pronto. Daqui pra frente esse PC se atualiza sozinho.
 
 ---
 
+## Mensagens do Chat do Cosmo na lateral (versão 1.1.0)
+
+Desde a 1.1.0, além da convocação em tela cheia, o app mostra as **mensagens do
+Chat do Cosmo** que chegam com o Cosmo fora de vista (fechado, minimizado ou atrás
+de outra janela): elas sobem num quadro no **canto de baixo à esquerda** da tela
+principal, por cima das outras janelas, **sem roubar o foco** de quem está
+digitando em outro programa.
+
+- Cada conversa aparece com quem mandou (ou o grupo do setor), as últimas
+  mensagens (texto, arquivo, foto e áudio — o áudio dá pra ouvir ali mesmo).
+- O quadro **só sai** quando a pessoa **responde ali mesmo** (Enter envia) ou
+  **fecha no ✕** — ou quando lê a conversa no Cosmo. Fechar não marca como lida:
+  ela continua não lida no Cosmo.
+- **Abrir no Cosmo** abre a conversa no navegador.
+- Com o Cosmo à vista, nada aparece aqui (a mensagem chega dentro do Cosmo).
+- Quem decide o que mostrar é o banco (`chat_para_o_app`); o app só pergunta (ao
+  vivo e, de reserva, a cada 15 s) e mostra. Banco sem o chat: o app fica quieto
+  (confere de novo a cada 10 min) e a convocação continua igual.
+
+---
+
 ## Parte 3 — Lançar uma atualização depois
 
 Sempre que quiser mudar algo:

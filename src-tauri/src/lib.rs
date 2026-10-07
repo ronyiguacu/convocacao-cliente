@@ -104,6 +104,7 @@ fn ler_config_arquivo(app: &AppHandle) -> Option<Config> {
 struct AppState {
     overlays: Mutex<Vec<String>>, // labels das janelas de alerta abertas
     dados_alerta: Mutex<Option<serde_json::Value>>, // dados da chamada atual
+    recados: Mutex<Option<serde_json::Value>>, // mensagens do chat na lateral (1.1.0)
 }
 
 // ---------- Comandos chamados pelo frontend ----------
@@ -118,6 +119,8 @@ fn qual_view(window: WebviewWindow) -> String {
         "diagnostico".to_string()
     } else if l.starts_with("alerta") {
         "alerta".to_string()
+    } else if l == "recados" {
+        "recados".to_string()
     } else {
         "oculta".to_string()
     }
@@ -296,6 +299,138 @@ fn confirmar(app: AppHandle, id: String) {
     *app.state::<AppState>().dados_alerta.lock().unwrap() = None;
 }
 
+// ---------- Chat da empresa: a mensagem subindo na lateral esquerda (1.1.0) ----------
+//
+// Rony, 07/10/2026: mensagem do Chat do Cosmo, com o Cosmo fora de vista, aparece "subindo na
+// lateral esquerda e só sai da tela quando clicar no X de fechar ou responder" — não o alerta de
+// tela cheia. A janela "oculta" pergunta ao banco (chat_para_o_app) e manda a lista pra cá; esta
+// janela fica no canto de baixo à esquerda da tela principal, por cima das outras, sem roubar o foco
+// de quem está digitando em outro programa (nasce sem foco e é fechada quando a lista esvazia —
+// mostrar de novo uma janela escondida no Windows pegaria o foco). Responder e o X voltam pra
+// "oculta", que fala com o banco.
+
+const RECADOS_LARGURA: f64 = 380.0;
+const RECADOS_MARGEM: f64 = 14.0;
+
+/// Canto de baixo à esquerda da tela principal (fora da barra de tarefas), em pixels físicos.
+fn posicionar_recados(w: &WebviewWindow, altura_logica: f64) {
+    let monitor = match w.primary_monitor() {
+        Ok(Some(m)) => m,
+        _ => return,
+    };
+    let escala = monitor.scale_factor();
+    let area = monitor.work_area();
+    let margem = (RECADOS_MARGEM * escala).round() as i32;
+    let largura = (RECADOS_LARGURA * escala).round() as u32;
+    let maxima = (area.size.height as i32 - 2 * margem).max(120) as u32;
+    let altura = ((altura_logica * escala).round() as u32).clamp(80, maxima);
+    let x = area.position.x + margem;
+    let y = area.position.y + area.size.height as i32 - altura as i32 - margem;
+    let _ = w.set_size(tauri::PhysicalSize::new(largura, altura));
+    let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+}
+
+fn janela_recados(app: &AppHandle) -> Option<WebviewWindow> {
+    if let Some(w) = app.get_webview_window("recados") {
+        return Some(w);
+    }
+    let w = WebviewWindowBuilder::new(app, "recados", WebviewUrl::App("index.html".into()))
+        .additional_browser_args(ARGS_WEBVIEW2)
+        .title("Mensagens do Cosmo")
+        .inner_size(RECADOS_LARGURA, 150.0)
+        .visible(false)
+        .focused(false)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .minimizable(false)
+        .maximizable(false)
+        .shadow(true)
+        .build()
+        .ok()?;
+    posicionar_recados(&w, 150.0);
+    let _ = w.set_visible_on_all_workspaces(true);
+    let _ = w.show();
+    Some(w)
+}
+
+/// A "oculta" manda a lista do banco: vazia fecha a janela; com algo, abre (se preciso) e entrega.
+#[tauri::command]
+fn mostrar_recados(app: AppHandle, lista: serde_json::Value) {
+    let vazia = lista.as_array().map(|l| l.is_empty()).unwrap_or(true);
+    *app.state::<AppState>().recados.lock().unwrap() = if vazia { None } else { Some(lista.clone()) };
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if vazia {
+            if let Some(w) = app2.get_webview_window("recados") {
+                let _ = w.close();
+            }
+            return;
+        }
+        if app2.get_webview_window("recados").is_some() {
+            let _ = app2.emit_to("recados", "recados", lista);
+        } else {
+            janela_recados(&app2); // ela busca a lista ao carregar (pegar_recados)
+        }
+    });
+}
+
+/// A janela das mensagens busca a lista ao carregar.
+#[tauri::command]
+fn pegar_recados(app: AppHandle) -> Option<serde_json::Value> {
+    app.state::<AppState>().recados.lock().unwrap().clone()
+}
+
+/// A janela das mensagens diz a altura do que tem dentro; ela cresce pra cima a partir do canto.
+#[tauri::command]
+fn recados_tamanho(window: WebviewWindow, altura: f64) {
+    if window.label() != "recados" {
+        return;
+    }
+    let w = window.clone();
+    let _ = window.run_on_main_thread(move || posicionar_recados(&w, altura));
+}
+
+/// "Abrir no Cosmo": a conversa no navegador (o Cosmo abre nela).
+#[tauri::command]
+fn abrir_no_cosmo(conversa: String) -> Result<(), String> {
+    let valido = conversa.len() == 36 && conversa.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+    if !valido {
+        return Err("conversa invalida".into());
+    }
+    abrir_endereco(&format!("https://pulso-e8r.pages.dev/cosmo/?conversa={conversa}#chat"))
+}
+
+#[cfg(windows)]
+fn abrir_endereco(url: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
+        .creation_flags(0x0800_0000) // sem janela de console
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn abrir_endereco(url: &str) -> Result<(), String> {
+    std::process::Command::new("/usr/bin/open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn abrir_endereco(url: &str) -> Result<(), String> {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 fn overlay_labels(app: &AppHandle) -> Vec<String> {
     app.state::<AppState>().overlays.lock().unwrap().clone()
 }
@@ -351,7 +486,11 @@ pub fn run() {
             mostrar_alerta,
             pegar_dados_alerta,
             confirmar,
-            carregar_setores
+            carregar_setores,
+            mostrar_recados,
+            pegar_recados,
+            recados_tamanho,
+            abrir_no_cosmo
         ])
         .setup(|app| {
             let handle = app.handle().clone();

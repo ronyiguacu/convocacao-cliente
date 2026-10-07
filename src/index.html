@@ -101,6 +101,60 @@
     .diag-row.warn { border-color: rgba(255,122,0,.55); }
     .diag-row.err { border-color: rgba(248,113,113,.55); }
     .diag-status { font-size: 13px; color: #9aa4b2; margin-bottom: 14px; }
+
+    /* ===== Mensagens do Chat do Cosmo, na lateral esquerda (1.1.0) ===== */
+    body.v-recados { background: #161922; color: #eef2f7; overflow-x: hidden; overflow-y: auto; }
+    .rec-topo {
+      display: flex; align-items: center; gap: 8px; padding: 9px 12px; font-size: 12px; font-weight: 700;
+      color: #9aa4b2; letter-spacing: .02em; background: #11141b; border-bottom: 1px solid #262b38;
+    }
+    .rec-ponto { width: 8px; height: 8px; border-radius: 50%; background: #2A9D8F; box-shadow: 0 0 0 3px rgba(42,157,143,.25); }
+    .rec-cont { margin-left: auto; font-weight: 600; }
+    .rec { padding: 11px 12px 10px; border-bottom: 1px solid #262b38; animation: recSobe .34s cubic-bezier(.2,.8,.2,1); }
+    .rec:last-child { border-bottom: none; }
+    .rec.chegou { animation: recSobe .34s cubic-bezier(.2,.8,.2,1), recLuz 1.4s ease .34s; }
+    @keyframes recSobe { from { transform: translateY(46px); opacity: 0; } to { transform: none; opacity: 1; } }
+    @keyframes recLuz { 0%, 100% { background: transparent; } 30% { background: rgba(255,122,0,.12); } }
+    .rec-cab { display: flex; align-items: center; gap: 10px; }
+    .rec-av {
+      flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; background: hsl(var(--h) 34% 27%); color: hsl(var(--h) 72% 82%);
+    }
+    .rec-av.grupo { background: rgba(255,122,0,.16); color: #ff9a3d; }
+    .rec-av svg { width: 19px; height: 19px; }
+    .rec-quem { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .rec-quem b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rec-quem span { font-size: 11.5px; color: #9aa4b2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rec-x { flex: none; width: 28px; height: 28px; border: none; border-radius: 50%; background: transparent; color: #9aa4b2; font-size: 14px; cursor: pointer; }
+    .rec-x:hover { background: #262b38; color: #fff; }
+    .rec-msgs { margin: 8px 0 8px 46px; display: flex; flex-direction: column; gap: 4px; }
+    .rec-msg {
+      background: #222735; border-radius: 10px 10px 10px 3px; padding: 6px 9px; font-size: 13.5px; line-height: 1.35;
+      white-space: pre-wrap; overflow-wrap: anywhere; max-height: 8.4em; overflow: hidden;
+    }
+    .rec-msg .rec-autor { color: hsl(var(--h) 70% 72%); font-weight: 700; }
+    .rec-msg audio { display: block; width: 100%; height: 34px; margin-top: 2px; }
+    .rec-msg img { display: block; max-width: 100%; max-height: 140px; border-radius: 6px; margin-top: 2px; }
+    .rec-msg .rec-leg { margin-top: 4px; }
+    .rec-mais { font-size: 11.5px; color: #9aa4b2; padding-left: 2px; }
+    .rec-resp { display: flex; align-items: flex-end; gap: 6px; margin-left: 46px; }
+    .rec-resp textarea {
+      flex: 1; min-height: 34px; max-height: 90px; resize: none; padding: 7px 11px; border-radius: 16px; outline: none;
+      background: #0f1117; border: 1px solid #2a2d3a; color: #fff; font: inherit; font-size: 13.5px; line-height: 1.35;
+    }
+    .rec-resp textarea:focus { border-color: #ff7a00; }
+    .rec-resp button {
+      flex: none; height: 34px; padding: 0 13px; border: none; border-radius: 16px; background: #ff7a00; color: #1a1000;
+      font-size: 13px; font-weight: 700; cursor: pointer;
+    }
+    .rec-resp button:hover { background: #ff8c1a; }
+    .rec-resp button:disabled, .rec-resp textarea:disabled { opacity: .5; cursor: default; }
+    .rec-pe { display: flex; align-items: center; gap: 10px; margin: 6px 0 0 46px; font-size: 11.5px; color: #9aa4b2; min-height: 16px; }
+    .rec-pe button { border: none; background: none; padding: 0; color: #7fb8ff; font-size: 11.5px; cursor: pointer; }
+    .rec-pe button:hover { text-decoration: underline; }
+    .rec-status { margin-left: auto; }
+    .rec-status.erro { color: #f87171; }
+    .rec-status.ok { color: #18c964; font-weight: 700; }
   </style>
 </head>
 <body>
@@ -248,6 +302,196 @@
       listen('parar-alerta', () => parar());
     }
 
+    // ---------------- MENSAGENS DO CHAT (lateral esquerda, 1.1.0) ----------------
+    // Rony, 07/10/2026: mensagem do Chat do Cosmo com o Cosmo fora de vista aparece aqui, "subindo na
+    // lateral esquerda", e só sai quando a pessoa responde ou fecha no X (ou lê no Cosmo). Quem fala com
+    // o banco é a janela "oculta"; esta só mostra e devolve o que a pessoa fez.
+    function viewRecados() {
+      document.body.className = 'v-recados';
+      app.innerHTML = '<div class="rec-topo"><span class="rec-ponto"></span>Mensagens do Cosmo<span class="rec-cont" id="recCont"></span></div>' +
+        '<div id="recLista"></div>';
+      const lista = document.getElementById('recLista');
+      const CORES = [210, 150, 280, 28, 340, 190, 100, 255, 0, 170, 48, 310];
+      const ICO_GRUPO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+      let conversas = [];
+      const totais = {};   // conversa → quantas já estavam na tela (som só pro que é novo)
+      const enviando = {}; // conversa → id da resposta indo
+
+      function cor(chave) {
+        let h = 2166136261; const s = String(chave || '');
+        for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+        return CORES[(h >>> 0) % CORES.length];
+      }
+      function iniciais(nome) {
+        const p = String(nome || '').trim().split(/\s+/).filter(Boolean);
+        if (!p.length) return '?';
+        return (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
+      }
+      function primeiro(nome) { return String(nome || '').trim().split(/\s+/)[0] || 'Alguém'; }
+      function hora(iso) {
+        const t = Date.parse(String(iso || '').replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1').replace(/([+-]\d\d)$/, '$1:00'));
+        if (isNaN(t)) return '';
+        const d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+      }
+      function duracao(s) { s = Math.max(0, Math.round(Number(s) || 0)); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+      function novoId() {
+        if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
+      }
+      let ctxSom = null;
+      function som() {
+        try {
+          ctxSom = ctxSom || new AudioContext();
+          if (ctxSom.state === 'suspended') ctxSom.resume();
+          [[0, 660], [0.12, 990]].forEach(p => {
+            const o = ctxSom.createOscillator(), g = ctxSom.createGain();
+            o.connect(g); g.connect(ctxSom.destination); o.type = 'sine'; o.frequency.value = p[1];
+            g.gain.setValueAtTime(0.25, ctxSom.currentTime + p[0]);
+            g.gain.exponentialRampToValueAtTime(0.001, ctxSom.currentTime + p[0] + 0.18);
+            o.start(ctxSom.currentTime + p[0]); o.stop(ctxSom.currentTime + p[0] + 0.2);
+          });
+        } catch (e) {}
+      }
+      function htmlMsg(c, m) {
+        const autor = c.tipo === 'setor' ? '<span class="rec-autor" style="--h:' + cor(m.autor_id) + '">' + html(primeiro(m.autor_nome)) + ':</span> ' : '';
+        const leg = m.texto && m.tipo !== 'texto' ? '<div class="rec-leg">' + html(m.texto) + '</div>' : '';
+        if (m.tipo === 'audio') {
+          return '<div class="rec-msg">' + autor + '🎤 Áudio (' + duracao(m.duracao_s) + ')' +
+            (m.url ? '<audio controls preload="metadata" src="' + html(m.url) + '"></audio>' : '') + leg + '</div>';
+        }
+        if (m.tipo === 'arquivo') {
+          if (/^image\//.test(m.arquivo_tipo || '') && m.url) return '<div class="rec-msg">' + autor + '📷<img src="' + html(m.url) + '" alt="">' + leg + '</div>';
+          return '<div class="rec-msg">' + autor + '📎 ' + html(m.arquivo_nome || 'Arquivo') + leg + '</div>';
+        }
+        return '<div class="rec-msg">' + autor + html(m.texto || '') + '</div>';
+      }
+      function htmlMensagens(c) {
+        const ms = c.mensagens || [];
+        const mais = (c.total || ms.length) - ms.length;
+        return (mais > 0 ? '<div class="rec-mais">+ ' + mais + (mais > 1 ? ' mensagens antes' : ' mensagem antes') + '</div>' : '') + ms.map(m => htmlMsg(c, m)).join('');
+      }
+      function htmlCabeca(c) {
+        const grupo = c.tipo === 'setor';
+        return '<span class="rec-av' + (grupo ? ' grupo' : '') + '" style="--h:' + cor(c.id) + '">' + (grupo ? ICO_GRUPO : html(iniciais(c.titulo))) + '</span>' +
+          '<div class="rec-quem"><b>' + html(grupo ? 'Grupo ' + c.titulo : c.titulo) + '</b><span>' + html([c.subtitulo, hora(c.ate)].filter(Boolean).join(' · ')) + '</span></div>' +
+          '<button type="button" class="rec-x" title="Fechar (continua no Cosmo como não lida)" aria-label="Fechar">✕</button>';
+      }
+      function cartao(c) {
+        const el = document.createElement('div');
+        el.className = 'rec chegou';
+        el.dataset.conv = c.id;
+        el.innerHTML = '<div class="rec-cab">' + htmlCabeca(c) + '</div><div class="rec-msgs">' + htmlMensagens(c) + '</div>' +
+          (c.pode_responder === false ? '' :
+            '<form class="rec-resp"><textarea rows="1" maxlength="4000" placeholder="Responder…" aria-label="Responder"></textarea><button type="submit">Enviar</button></form>') +
+          '<div class="rec-pe"><button type="button" class="rec-abrir">Abrir no Cosmo</button><span class="rec-status"></span></div>';
+        el.querySelector('.rec-x').addEventListener('click', () => fechar(c.id));
+        el.querySelector('.rec-abrir').addEventListener('click', () => { invoke('abrir_no_cosmo', { conversa: c.id }).catch(() => {}); });
+        const form = el.querySelector('.rec-resp');
+        if (form) {
+          const t = form.querySelector('textarea');
+          t.addEventListener('input', () => { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 90) + 'px'; ajustar(); });
+          t.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); responder(c.id); } });
+          form.addEventListener('submit', e => { e.preventDefault(); responder(c.id); });
+        }
+        return el;
+      }
+      function status(conv, texto, tipo) {
+        const el = lista.querySelector('.rec[data-conv="' + conv + '"] .rec-status');
+        if (el) { el.textContent = texto || ''; el.className = 'rec-status' + (tipo ? ' ' + tipo : ''); }
+      }
+      function tirar(conv) {
+        const el = lista.querySelector('.rec[data-conv="' + conv + '"]');
+        if (el) el.remove();
+        conversas = conversas.filter(c => c.id !== conv);
+        delete totais[conv];
+        depois();
+      }
+      function fechar(conv) {
+        const c = conversas.find(x => x.id === conv);
+        TAURI.event.emit('recado-fechar', { conversa: conv, ate: c ? c.ate : null }).catch(() => {});
+        tirar(conv);
+      }
+      function responder(conv) {
+        const el = lista.querySelector('.rec[data-conv="' + conv + '"]');
+        if (!el || enviando[conv]) return;
+        const t = el.querySelector('textarea'), b = el.querySelector('.rec-resp button');
+        const texto = (t.value || '').trim();
+        if (!texto) return;
+        const id = novoId();
+        enviando[conv] = id;
+        t.disabled = true; b.disabled = true;
+        status(conv, 'Enviando…');
+        TAURI.event.emit('recado-responder', { conversa: conv, texto: texto, id: id }).catch(() => {
+          delete enviando[conv]; t.disabled = false; b.disabled = false; status(conv, 'Não foi. Tente de novo.', 'erro');
+        });
+      }
+      listen('recado-enviado', e => {
+        const p = e.payload || {};
+        if (!p.conversa || enviando[p.conversa] !== p.id) return;
+        delete enviando[p.conversa];
+        const el = lista.querySelector('.rec[data-conv="' + p.conversa + '"]');
+        if (!el) return;
+        if (p.ok) {
+          status(p.conversa, '✓ Enviada', 'ok');
+          setTimeout(() => tirar(p.conversa), 900);
+        } else {
+          const t = el.querySelector('textarea'), b = el.querySelector('.rec-resp button');
+          if (t) t.disabled = false; if (b) b.disabled = false;
+          status(p.conversa, p.erro || 'Não foi. Tente de novo.', 'erro');
+        }
+      });
+      function ajustar() {
+        requestAnimationFrame(() => {
+          const altura = document.querySelector('.rec-topo').offsetHeight + lista.scrollHeight;
+          invoke('recados_tamanho', { altura: altura }).catch(() => {});
+        });
+      }
+      function depois() {
+        const n = conversas.length;
+        document.getElementById('recCont').textContent = n > 1 ? n + ' conversas' : '';
+        if (!n) { invoke('mostrar_recados', { lista: [] }).catch(() => {}); return; }
+        ajustar();
+      }
+      function receber(nova) {
+        nova = Array.isArray(nova) ? nova : [];
+        let tocar = false;
+        const ids = nova.map(c => c.id);
+        conversas.filter(c => ids.indexOf(c.id) < 0 && !enviando[c.id]).forEach(c => {
+          const el = lista.querySelector('.rec[data-conv="' + c.id + '"]'); if (el) el.remove(); delete totais[c.id];
+        });
+        nova.forEach(c => {
+          let el = lista.querySelector('.rec[data-conv="' + c.id + '"]');
+          if (!el) {
+            el = cartao(c);
+            lista.appendChild(el);   // a mais nova embaixo, perto do canto
+            tocar = true;
+          } else if ((totais[c.id] || 0) !== c.total || el.dataset.ate !== String(c.ate)) {
+            el.querySelector('.rec-cab').innerHTML = htmlCabeca(c);
+            el.querySelector('.rec-cab .rec-x').addEventListener('click', () => fechar(c.id));
+            el.querySelector('.rec-msgs').innerHTML = htmlMensagens(c);
+            if ((c.total || 0) > (totais[c.id] || 0)) {
+              tocar = true;
+              el.classList.remove('chegou'); void el.offsetWidth; el.classList.add('chegou');
+              if (lista.lastElementChild !== el) {
+                // desce pra perto do canto sem tirar o cursor de quem está respondendo nela
+                const foco = el.contains(document.activeElement) ? document.activeElement : null;
+                const ini = foco ? foco.selectionStart : 0, fim = foco ? foco.selectionEnd : 0;
+                lista.appendChild(el);
+                if (foco) { foco.focus(); try { foco.setSelectionRange(ini, fim); } catch (e) {} }
+              }
+            }
+          }
+          el.dataset.ate = String(c.ate);
+          totais[c.id] = c.total || 0;
+        });
+        conversas = nova.concat(conversas.filter(c => ids.indexOf(c.id) < 0 && enviando[c.id]));
+        if (tocar) som();
+        depois();
+      }
+      invoke('pegar_recados').then(l => { if (l) receber(l); else depois(); }).catch(() => {});
+      listen('recados', e => receber(e.payload));
+    }
+
     // ---------------- OCULTA (conexão via Supabase Realtime) ----------------
     let mostrando = false;
     let realtimeConectado = false;
@@ -352,6 +596,109 @@
       // Chamados perdidos enquanto o PC estava desligado.
       processarPendentes();
       if (!pendentesTimer) pendentesTimer = setInterval(processarPendentes, 15000);
+
+      iniciarChat();
+    }
+
+    // ---------------- CHAT DA EMPRESA (1.1.0) ----------------
+    // A mensagem do Chat do Cosmo que chegou com o Cosmo fora de vista (o banco anota: chat_para_o_app)
+    // vai pra janela "recados", no canto de baixo à esquerda. Ao vivo (Realtime nas mensagens e no
+    // "li" desta pessoa) e, de reserva, a cada 15 s. Banco sem o chat: fica quieto.
+    let chatAtivo = true, chatBuscando = false, chatDeNovo = false, chatTimer = null, chatUltima = 0;
+    let chatChave = '', chatCanal = null, chatTentativas = 0, chatReligar = null, chatMeuId = null, chatIniciado = false;
+
+    function agendarRecados(ms) { clearTimeout(chatTimer); chatTimer = setTimeout(buscarRecados, ms || 0); }
+
+    async function buscarRecados() {
+      if (!chatAtivo) return;
+      if (chatBuscando) { chatDeNovo = true; return; }
+      chatBuscando = true; chatUltima = Date.now();
+      try {
+        const r = await db.rpc('chat_para_o_app');
+        if (r.error) {
+          if (r.error.code === 'PGRST202' || /could not find the function/i.test(r.error.message || '')) {
+            // banco ainda sem o chat: fica quieto e confere de novo daqui a 10 min
+            chatAtivo = false; salvarStatus({ chat: 'banco ainda sem o chat' });
+            setTimeout(() => { chatAtivo = true; agendarRecados(0); }, 600000);
+            return;
+          }
+          throw r.error;
+        }
+        const d = r.data || {};
+        const conversas = d.ligado ? (d.conversas || []) : [];
+        const chave = JSON.stringify(conversas.map(c => [c.id, c.total, c.ate, c.pode_responder]));
+        if (chave !== chatChave) {
+          // fotos e áudios: endereço assinado (1 h), num pedido só
+          const caminhos = [];
+          conversas.forEach(c => (c.mensagens || []).forEach(m => {
+            if (m.arquivo && (m.tipo === 'audio' || /^image\//.test(m.arquivo_tipo || ''))) caminhos.push(m.arquivo);
+          }));
+          if (caminhos.length) {
+            try {
+              const u = await db.storage.from('chat-anexos').createSignedUrls(caminhos, 3600);
+              (u.data || []).forEach(x => conversas.forEach(c => (c.mensagens || []).forEach(m => { if (x && m.arquivo === x.path) m.url = x.signedUrl; })));
+            } catch (e) {}
+          }
+          await invoke('mostrar_recados', { lista: conversas });
+          chatChave = chave;
+        }
+        salvarStatus({ chat: conversas.length ? conversas.length + ' conversa(s) na lateral' : 'nada novo', ultima_busca_chat: agora(), ultimo_erro_chat: '' });
+      } catch (e) {
+        salvarStatus({ ultimo_erro_chat: erroTexto(e) });
+      } finally {
+        chatBuscando = false;
+        if (chatDeNovo) { chatDeNovo = false; agendarRecados(200); }
+      }
+    }
+
+    function assinarChat() {
+      if (chatCanal) { try { db.removeChannel(chatCanal); } catch (e) {} }
+      const canal = db.channel('chat-app-' + Date.now())
+        .on('postgres_changes', { event: 'INSERT', schema: 'chat', table: 'mensagens' }, () => agendarRecados(400))
+        .on('postgres_changes', { event: 'UPDATE', schema: 'chat', table: 'mensagens' }, () => agendarRecados(400));
+      if (chatMeuId) canal.on('postgres_changes', { event: 'UPDATE', schema: 'chat', table: 'membros', filter: 'usuario_id=eq.' + chatMeuId }, () => agendarRecados(300));
+      chatCanal = canal;
+      canal.subscribe(status => {
+        if (canal !== chatCanal) return;
+        if (status === 'SUBSCRIBED') { chatTentativas = 0; agendarRecados(0); return; }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          clearTimeout(chatReligar);
+          const espera = Math.min(30000, 2000 * Math.pow(2, chatTentativas++));
+          chatReligar = setTimeout(() => { if (canal === chatCanal) assinarChat(); }, espera);
+        }
+      });
+    }
+
+    async function iniciarChat() {
+      if (chatIniciado) return;
+      chatIniciado = true;
+      try { const s = (await db.auth.getSession()).data.session; chatMeuId = (s && s.user && s.user.id) || null; } catch (e) {}
+      assinarChat();
+      agendarRecados(0);
+      setInterval(() => { if (Date.now() - chatUltima > 14000) buscarRecados(); }, 15000);
+      setInterval(() => { chatChave = ''; }, 120000);   // de tempos em tempos, entrega de novo (se a janela sumiu, volta)
+      listen('verificar-pendentes', () => { if (Date.now() - chatUltima > 14000) buscarRecados(); });
+      // o X da janela das mensagens: fecha o que ela mostrou (o que chegar depois volta a aparecer)
+      listen('recado-fechar', async (e) => {
+        const p = e.payload || {};
+        try { await db.rpc('chat_app_fechar', { p_conversa: p.conversa, p_ate: p.ate || null }); } catch (err) {}
+        chatChave = ''; agendarRecados(150);
+      });
+      // responder ali mesmo: manda pelo banco e conta pra janela se foi
+      listen('recado-responder', async (e) => {
+        const p = e.payload || {};
+        let ok = false, erro = '';
+        try {
+          const r = await db.rpc('chat_enviar', { p_conversa: p.conversa, p_texto: p.texto, p_id: p.id });
+          if (r.error) throw r.error;
+          ok = true;
+        } catch (err) {
+          erro = err && err.hint === 'saiu' ? 'A pessoa saiu da equipe.' : err && err.hint === 'devagar' ? 'Espere um pouquinho e mande de novo.' : 'Não foi: ' + erroTexto(err);
+        }
+        const volta = { conversa: p.conversa, id: p.id, ok: ok, erro: erro };
+        try { await TAURI.event.emitTo('recados', 'recado-enviado', volta); } catch (e2) { try { await TAURI.event.emit('recado-enviado', volta); } catch (e3) {} }
+        chatChave = ''; agendarRecados(400);
+      });
     }
 
     async function viewOculta() {
@@ -462,6 +809,15 @@
       const rt = await testarRealtimeDiag(fid);
       linhas.push(diagLinha('Realtime Supabase', rt, rt === 'SUBSCRIBED' ? 'ok' : 'err'));
 
+      try {
+        const r = await db.rpc('chat_para_o_app');
+        if (r.error) throw r.error;
+        const n = r.data && r.data.ligado ? (r.data.conversas || []).length : 0;
+        linhas.push(diagLinha('Chat do Cosmo (lateral)', r.data && r.data.ligado ? (n ? n + ' conversa(s) com mensagem nova' : 'ligado, nada novo') : 'sem chat pra este login', 'ok'));
+      } catch (e) {
+        linhas.push(diagLinha('Chat do Cosmo (lateral)', erroTexto(e), 'warn'));
+      }
+
       linhas.push(diagLinha('Ultimo status salvo', JSON.stringify(local), ''));
       lista.innerHTML = linhas.join('');
       status.textContent = 'Atualizado em ' + agora();
@@ -474,6 +830,7 @@
       if (view === 'cadastro') viewLogin('cadastro');
       else if (view === 'alerta') viewAlerta();
       else if (view === 'diagnostico') viewDiagnostico();
+      else if (view === 'recados') viewRecados();
       else viewOculta();
     })();
   </script>
