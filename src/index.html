@@ -598,6 +598,24 @@
       if (!pendentesTimer) pendentesTimer = setInterval(processarPendentes, 15000);
 
       iniciarChat();
+      contarInicio();
+    }
+
+    // ---------------- COMO O APP SUBIU (1.1.1) ----------------
+    // Conta pro banco a versao, se subiu sozinho com o computador e como estava o iniciar com o sistema
+    // (ok, religado...): o Cosmo usa pra avisar quem esta com o app fechado e pra saber, de longe,
+    // por que um app nao subiu (Rony, 08/10/2026: a Convocacao da Cinthia nao abria com o Windows).
+    let inicioContado = false;
+    async function contarInicio() {
+      if (inicioContado) return;
+      inicioContado = true;
+      try {
+        const i = await invoke('inicio_info');
+        if (!i) return;
+        salvarStatus({ versao: i.versao, subiu_sozinho: !!i.sozinho, iniciar_com_sistema: i.autostart || '' });
+        const r = await db.rpc('convocacao_app_inicio', { p_versao: i.versao, p_sozinho: !!i.sozinho, p_autostart: i.autostart || null });
+        if (r.error && !(r.error.code === 'PGRST202' || /could not find the function/i.test(r.error.message || ''))) inicioContado = false;
+      } catch (e) { inicioContado = false; }
     }
 
     // ---------------- CHAT DA EMPRESA (1.1.0) ----------------
@@ -808,6 +826,15 @@
 
       const rt = await testarRealtimeDiag(fid);
       linhas.push(diagLinha('Realtime Supabase', rt, rt === 'SUBSCRIBED' ? 'ok' : 'err'));
+
+      try {
+        const i = await invoke('inicio_info');
+        if (i) {
+          const auto = { ok: 'ligado', religado: 'estava desligado nos aplicativos de inicialização — religado agora', desligado: 'desligado (não deu pra religar)', sem_registro: 'não consegui gravar' }[i.autostart] || (i.autostart || '?');
+          linhas.push(diagLinha('Iniciar com o computador', auto + (i.sozinho ? ' · esta vez subiu sozinho' : ' · esta vez foi aberto à mão'), i.autostart === 'ok' || i.autostart === 'religado' ? 'ok' : 'warn'));
+          linhas.push(diagLinha('Versão do app', i.versao || '?', ''));
+        }
+      } catch (e) {}
 
       try {
         const r = await db.rpc('chat_para_o_app');

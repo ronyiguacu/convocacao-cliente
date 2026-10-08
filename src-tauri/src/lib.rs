@@ -31,26 +31,55 @@ async fn carregar_setores() -> Vec<String> {
 
 // ---------- Inicio automatico (grava no registro com ASPAS) ----------
 
+/// Windows: grava o inicio automatico (Run, com aspas e --autostart, pra saber que subiu sozinho) e,
+/// desde a 1.1.1, religa se ele foi desligado nos "Aplicativos de inicializacao" (Gerenciador de
+/// Tarefas ou Configuracoes): o Windows guarda isso em StartupApproved\Run, um valor binario cujo
+/// 1o byte impar quer dizer desligado (Rony, 08/10/2026: a Convocacao da Cinthia nao subia com o
+/// computador). Devolve como estava: ok, religado, desligado (nao deu pra religar) ou sem_registro.
 #[cfg(windows)]
-fn habilitar_autostart() {
-    use winreg::enums::HKEY_CURRENT_USER;
-    use winreg::RegKey;
-    if let Ok(exe) = std::env::current_exe() {
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        if let Ok((run, _)) =
-            hkcu.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
-        {
-            // Aspas obrigatorias por causa do espaco no caminho do usuario.
-            let valor = format!("\"{}\"", exe.display());
-            let _ = run.set_value("Convocacao", &valor);
+fn habilitar_autostart() -> String {
+    use winreg::enums::{RegType, HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
+    use winreg::{RegKey, RegValue};
+    let Ok(exe) = std::env::current_exe() else {
+        return "sem_registro".into();
+    };
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let Ok((run, _)) = hkcu.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run") else {
+        return "sem_registro".into();
+    };
+    // Aspas obrigatorias por causa do espaco no caminho do usuario.
+    let valor = format!("\"{}\" --autostart", exe.display());
+    if run.set_value("Convocacao", &valor).is_err() {
+        return "sem_registro".into();
+    }
+    let mut estado = "ok";
+    if let Ok(aprovados) = hkcu.open_subkey_with_flags(
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run",
+        KEY_READ | KEY_SET_VALUE,
+    ) {
+        if let Ok(atual) = aprovados.get_raw_value("Convocacao") {
+            if atual.bytes.first().map(|b| b & 1 == 1).unwrap_or(false) {
+                let mut bytes = vec![0u8; 12];
+                bytes[0] = 2;
+                let ligado = RegValue {
+                    bytes,
+                    vtype: RegType::REG_BINARY,
+                };
+                estado = if aprovados.set_raw_value("Convocacao", &ligado).is_ok() {
+                    "religado"
+                } else {
+                    "desligado"
+                };
+            }
         }
     }
+    estado.into()
 }
 
 /// macOS: grava um LaunchAgent — o app passa a iniciar junto com o sistema
 /// (antes era uma funcao vazia: no Mac o app simplesmente nao subia sozinho).
 #[cfg(target_os = "macos")]
-fn habilitar_autostart() {
+fn habilitar_autostart() -> String {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(home) = std::env::var_os("HOME") {
             let dir = std::path::Path::new(&home).join("Library/LaunchAgents");
@@ -61,20 +90,25 @@ fn habilitar_autostart() {
 <plist version="1.0">
 <dict>
     <key>Label</key><string>com.iguacu.convocacao</string>
-    <key>ProgramArguments</key><array><string>{}</string></array>
+    <key>ProgramArguments</key><array><string>{}</string><string>--autostart</string></array>
     <key>RunAtLoad</key><true/>
 </dict>
 </plist>
 "#,
                 exe.display()
             );
-            let _ = fs::write(dir.join("com.iguacu.convocacao.plist"), plist);
+            if fs::write(dir.join("com.iguacu.convocacao.plist"), plist).is_ok() {
+                return "ok".into();
+            }
         }
     }
+    "sem_registro".into()
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn habilitar_autostart() {}
+fn habilitar_autostart() -> String {
+    "nao_se_aplica".into()
+}
 
 // ---------- Configuracao do funcionario ----------
 
@@ -105,6 +139,7 @@ struct AppState {
     overlays: Mutex<Vec<String>>, // labels das janelas de alerta abertas
     dados_alerta: Mutex<Option<serde_json::Value>>, // dados da chamada atual
     recados: Mutex<Option<serde_json::Value>>, // mensagens do chat na lateral (1.1.0)
+    inicio: Mutex<Option<serde_json::Value>>, // como o app subiu: versao, sozinho, autostart (1.1.1)
 }
 
 // ---------- Comandos chamados pelo frontend ----------
@@ -137,7 +172,7 @@ fn salvar_config(app: AppHandle, nome: String, setor: String) -> Result<(), Stri
     let texto = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
     fs::write(caminho_config(&app), texto).map_err(|e| e.to_string())?;
 
-    habilitar_autostart();
+    let _ = habilitar_autostart();
 
     // Reinicia: agora ja configurado, sobe conectado.
     app.restart()
@@ -431,6 +466,13 @@ fn abrir_endereco(url: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Como o app subiu (versao, se foi sozinho com o computador, o iniciar com o sistema): a janela
+/// oculta conta pro banco e o Diagnostico mostra.
+#[tauri::command]
+fn inicio_info(app: AppHandle) -> Option<serde_json::Value> {
+    app.state::<AppState>().inicio.lock().unwrap().clone()
+}
+
 fn overlay_labels(app: &AppHandle) -> Vec<String> {
     app.state::<AppState>().overlays.lock().unwrap().clone()
 }
@@ -526,7 +568,8 @@ pub fn run() {
             mostrar_recados,
             pegar_recados,
             recados_tamanho,
-            abrir_no_cosmo
+            abrir_no_cosmo,
+            inicio_info
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -561,8 +604,15 @@ pub fn run() {
                 .build(app)?;
 
             if config.is_some() {
-                // Ja configurado: garante o inicio automatico (com aspas) e sobe a conexao.
-                habilitar_autostart();
+                // Ja configurado: garante o inicio automatico (com aspas, religando se foi desligado)
+                // e anota como o app subiu, pra contar pro banco (convocacao_app_inicio).
+                let autostart = habilitar_autostart();
+                let sozinho = std::env::args().any(|a| a == "--autostart");
+                *app.state::<AppState>().inicio.lock().unwrap() = Some(serde_json::json!({
+                    "versao": app.package_info().version.to_string(),
+                    "sozinho": sozinho,
+                    "autostart": autostart,
+                }));
 
                 WebviewWindowBuilder::new(&handle, "oculta", WebviewUrl::App("index.html".into()))
                     .additional_browser_args(ARGS_WEBVIEW2)

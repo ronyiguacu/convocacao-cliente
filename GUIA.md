@@ -85,6 +85,14 @@ Desde a **1.1.1** o app também procura versão nova **de 30 em 30 minutos** com
 (antes, só quando abria — a versão nova só chegava quando a pessoa reiniciava o computador).
 Nunca troca com um alerta de convocação na tela; se chegar um no meio, o app reabre e mostra de novo.
 
+A 1.1.1 também **religa o iniciar com o Windows**: se alguém desligou a Convocação em
+*Configurações > Aplicativos > Inicialização* (ou no Gerenciador de Tarefas > Aplicativos de
+inicialização), ela liga de novo na próxima vez que abrir — o app precisa subir sozinho com o
+computador. E conta ao Cosmo como subiu (a versão, se subiu sozinho com o computador e como estava
+o iniciar com o sistema), pra dar pra saber de longe por que um computador ficou sem o app; o
+**Diagnóstico** mostra as duas coisas. Do lado do Cosmo, quem está com o app fechado vê no alto
+"A Convocação está fechada neste computador" e como abrir.
+
 ---
 
 ## Parte 3 — Lançar uma atualização depois
