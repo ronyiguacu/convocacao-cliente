@@ -93,6 +93,12 @@ o iniciar com o sistema), pra dar pra saber de longe por que um computador ficou
 **Diagnóstico** mostra as duas coisas. Do lado do Cosmo, quem está com o app fechado vê no alto
 "A Convocação está fechada neste computador" e como abrir.
 
+**Importante — a 1.1.1 corrige um travamento da 1.1.0 no Windows:** na 1.1.0, a primeira mensagem do
+Chat que abria o quadro da lateral travava o app por dentro (ele continuava dando sinal de ligado, mas
+não mostrava mais nada, nem convocação). Enquanto a 1.1.1 não chega em todo computador, o banco só manda
+as mensagens pra lateral do app que contou a versão 1.1.1 ou mais nova (`chat_para_o_app`); os outros
+recebem o aviso pelo Cosmo e pelo celular, como antes.
+
 ---
 
 ## Parte 3 — Lançar uma atualização depois

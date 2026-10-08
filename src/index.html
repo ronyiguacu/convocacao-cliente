@@ -597,8 +597,8 @@
       processarPendentes();
       if (!pendentesTimer) pendentesTimer = setInterval(processarPendentes, 15000);
 
-      iniciarChat();
-      contarInicio();
+      // conta a versao antes de ligar o chat: o banco so manda a lateral pra 1.1.1 em diante
+      contarInicio().then(iniciarChat, iniciarChat);
     }
 
     // ---------------- COMO O APP SUBIU (1.1.1) ----------------

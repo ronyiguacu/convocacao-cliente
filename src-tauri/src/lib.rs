@@ -180,8 +180,14 @@ fn salvar_config(app: AppHandle, nome: String, setor: String) -> Result<(), Stri
 
 /// Mostra o aviso em tela cheia em TODOS os monitores (janelas ja existem,
 /// so aparecem e sao reposicionadas na tela correta).
+///
+/// Assincrono de proposito (1.1.1): comando sincrono roda na thread principal DENTRO do aviso do
+/// WebView2 que trouxe o pedido, e o run_on_main_thread ali executa na hora. Se nesse momento
+/// precisar CRIAR janela (monitor ligado depois que o app abriu: garantir_overlays), o Windows
+/// trava o app inteiro (o WebView2 novo espera um aviso que nunca chega). Assincrono, o pedido
+/// volta na hora e o run_on_main_thread roda depois, no laco principal, onde criar janela e seguro.
 #[tauri::command]
-fn mostrar_alerta(app: AppHandle, id: String, origem: String, motivo: String) {
+async fn mostrar_alerta(app: AppHandle, id: String, origem: String, motivo: String) {
     acender_tela();
     let payload = serde_json::json!({ "id": id, "origem": origem, "motivo": motivo });
     *app.state::<AppState>().dados_alerta.lock().unwrap() = Some(payload.clone());
@@ -391,8 +397,12 @@ fn janela_recados(app: &AppHandle) -> Option<WebviewWindow> {
 }
 
 /// A "oculta" manda a lista do banco: vazia fecha a janela; com algo, abre (se preciso) e entrega.
+///
+/// Assincrono de proposito (1.1.1): na 1.1.0 era sincrono e, no Windows, criar a janela "recados"
+/// dentro do aviso do WebView2 travava o app inteiro na primeira mensagem (Laura e Junior, 08/10:
+/// o app seguia dando sinal de ligado, mas nao mostrava mais nada, nem convocacao). Ver mostrar_alerta.
 #[tauri::command]
-fn mostrar_recados(app: AppHandle, lista: serde_json::Value) {
+async fn mostrar_recados(app: AppHandle, lista: serde_json::Value) {
     let vazia = lista.as_array().map(|l| l.is_empty()).unwrap_or(true);
     *app.state::<AppState>().recados.lock().unwrap() = if vazia { None } else { Some(lista.clone()) };
     let app2 = app.clone();
