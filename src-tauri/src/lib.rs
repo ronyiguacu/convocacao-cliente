@@ -435,14 +435,50 @@ fn overlay_labels(app: &AppHandle) -> Vec<String> {
     app.state::<AppState>().overlays.lock().unwrap().clone()
 }
 
+// Atualizacao: ao abrir e, desde a 1.1.1, de 30 em 30 min com o app ligado. Antes era so ao abrir,
+// e a versao nova so chegava quando a pessoa reiniciava o computador (Rony, 08/10/2026: a 1.1.0 saiu
+// e nenhum computador pegou no mesmo dia). Nunca com um alerta de convocacao na tela; se chegar um
+// no meio da troca, o app reabre e mostra de novo (a chamada continua pendente no banco).
+const ATUALIZAR_A_CADA: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+fn alerta_na_tela(app: &AppHandle) -> bool {
+    app.state::<AppState>()
+        .dados_alerta
+        .lock()
+        .map(|d| d.is_some())
+        .unwrap_or(true)
+}
+
+/// Procura versao nova e, tendo, baixa e instala. Devolve true se instalou (falta reiniciar).
+async fn atualizar_se_tiver(app: &AppHandle) -> bool {
+    if alerta_na_tela(app) {
+        return false;
+    }
+    let Ok(updater) = app.updater() else {
+        return false;
+    };
+    let Ok(Some(update)) = updater.check().await else {
+        return false;
+    };
+    if alerta_na_tela(app) {
+        return false;
+    }
+    update.download_and_install(|_, _| {}, || {}).await.is_ok()
+}
+
 fn checar_atualizacao(app: AppHandle) {
+    let ao_abrir = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Ok(updater) = app.updater() {
-            if let Ok(Some(update)) = updater.check().await {
-                if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
-                    app.restart();
-                }
-            }
+        if atualizar_se_tiver(&ao_abrir).await {
+            ao_abrir.restart();
+        }
+    });
+    std::thread::spawn(move || loop {
+        std::thread::sleep(ATUALIZAR_A_CADA);
+        let agora = app.clone();
+        let instalou = tauri::async_runtime::block_on(async move { atualizar_se_tiver(&agora).await });
+        if instalou {
+            app.restart();
         }
     });
 }

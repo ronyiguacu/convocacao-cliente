@@ -81,6 +81,10 @@ digitando em outro programa.
   vivo e, de reserva, a cada 15 s) e mostra. Banco sem o chat: o app fica quieto
   (confere de novo a cada 10 min) e a convocação continua igual.
 
+Desde a **1.1.1** o app também procura versão nova **de 30 em 30 minutos** com ele ligado
+(antes, só quando abria — a versão nova só chegava quando a pessoa reiniciava o computador).
+Nunca troca com um alerta de convocação na tela; se chegar um no meio, o app reabre e mostra de novo.
+
 ---
 
 ## Parte 3 — Lançar uma atualização depois
