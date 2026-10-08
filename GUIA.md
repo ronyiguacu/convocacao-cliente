@@ -99,6 +99,11 @@ não mostrava mais nada, nem convocação). Enquanto a 1.1.1 não chega em todo 
 as mensagens pra lateral do app que contou a versão 1.1.1 ou mais nova (`chat_para_o_app`); os outros
 recebem o aviso pelo Cosmo e pelo celular, como antes.
 
+Desde a **1.1.2**, o **Abrir no Cosmo** da lateral abre o **app do Cosmo** do computador (quando ele está
+instalado), já na conversa: a Convocação anota o pedido no banco (`chat_pedir_abrir`) e chama o app; a
+página do Cosmo no app pega o pedido (vale 2 min) e abre a conversa. Sem o app do Cosmo (ou no Mac), abre
+a conversa no navegador, como antes.
+
 ---
 
 ## Parte 3 — Lançar uma atualização depois

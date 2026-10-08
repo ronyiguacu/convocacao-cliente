@@ -385,7 +385,8 @@
             '<form class="rec-resp"><textarea rows="1" maxlength="4000" placeholder="Responder…" aria-label="Responder"></textarea><button type="submit">Enviar</button></form>') +
           '<div class="rec-pe"><button type="button" class="rec-abrir">Abrir no Cosmo</button><span class="rec-status"></span></div>';
         el.querySelector('.rec-x').addEventListener('click', () => fechar(c.id));
-        el.querySelector('.rec-abrir').addEventListener('click', () => { invoke('abrir_no_cosmo', { conversa: c.id }).catch(() => {}); });
+        // quem abre é a janela "oculta" (tem o banco: anota o pedido pro app do Cosmo — 1.1.2)
+        el.querySelector('.rec-abrir').addEventListener('click', () => { TAURI.event.emit('recado-abrir', { conversa: c.id }).catch(() => {}); });
         const form = el.querySelector('.rec-resp');
         if (form) {
           const t = form.querySelector('textarea');
@@ -696,6 +697,16 @@
       setInterval(() => { if (Date.now() - chatUltima > 14000) buscarRecados(); }, 15000);
       setInterval(() => { chatChave = ''; }, 120000);   // de tempos em tempos, entrega de novo (se a janela sumiu, volta)
       listen('verificar-pendentes', () => { if (Date.now() - chatUltima > 14000) buscarRecados(); });
+      // "Abrir no Cosmo" (1.1.2): com o app do Cosmo instalado, anota o pedido no banco (a página do app
+      // abre a conversa) e chama o app; sem ele, a conversa no navegador
+      listen('recado-abrir', async (e) => {
+        const conv = e && e.payload && e.payload.conversa;
+        if (!conv) return;
+        let app = false;
+        try { app = !!(await invoke('tem_cosmo_app')); } catch (err) {}
+        if (app) { try { await db.rpc('chat_pedir_abrir', { p_conversa: conv }); } catch (err) {} }
+        try { await invoke('abrir_no_cosmo', { conversa: conv, noApp: app }); } catch (err) {}
+      });
       // o X da janela das mensagens: fecha o que ela mostrou (o que chegar depois volta a aparecer)
       listen('recado-fechar', async (e) => {
         const p = e.payload || {};

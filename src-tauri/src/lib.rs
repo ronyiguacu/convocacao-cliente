@@ -437,12 +437,46 @@ fn recados_tamanho(window: WebviewWindow, altura: f64) {
     let _ = window.run_on_main_thread(move || posicionar_recados(&w, altura));
 }
 
-/// "Abrir no Cosmo": a conversa no navegador (o Cosmo abre nela).
+/// O app do Cosmo do computador, se estiver instalado (1.1.2): o "Abrir no Cosmo" da lateral chama ele
+/// em vez do navegador (Rony, 08/10: "abre na pagina web, mesmo tendo o aplicativo instalado").
+/// Instalacao por usuario (o padrao: %LOCALAPPDATA%\Cosmo) ou pra todos (Arquivos de Programas).
+#[cfg(windows)]
+fn cosmo_instalado() -> Option<std::path::PathBuf> {
+    let mut lugares = Vec::new();
+    for var in ["LOCALAPPDATA", "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
+        if let Some(d) = std::env::var_os(var) {
+            lugares.push(std::path::PathBuf::from(d).join("Cosmo").join("cosmo.exe"));
+        }
+    }
+    lugares.into_iter().find(|p| p.is_file())
+}
+
+/// No Mac (e no resto) o botao segue abrindo a conversa no navegador.
+#[cfg(not(windows))]
+fn cosmo_instalado() -> Option<std::path::PathBuf> {
+    None
+}
+
 #[tauri::command]
-fn abrir_no_cosmo(conversa: String) -> Result<(), String> {
+fn tem_cosmo_app() -> bool {
+    cosmo_instalado().is_some()
+}
+
+/// "Abrir no Cosmo": com no_app (o app do Cosmo esta instalado e a Convocacao ja anotou o pedido no
+/// banco, chat_pedir_abrir), chama o app do Cosmo - aberto, ele so mostra a janela; a pagina dele pega
+/// o pedido e abre a conversa. Sem o app (ou se nao der pra chamar), a conversa no navegador.
+#[tauri::command]
+fn abrir_no_cosmo(conversa: String, no_app: Option<bool>) -> Result<(), String> {
     let valido = conversa.len() == 36 && conversa.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
     if !valido {
         return Err("conversa invalida".into());
+    }
+    if no_app.unwrap_or(false) {
+        if let Some(exe) = cosmo_instalado() {
+            if std::process::Command::new(&exe).spawn().is_ok() {
+                return Ok(());
+            }
+        }
     }
     abrir_endereco(&format!("https://pulso-e8r.pages.dev/cosmo/?conversa={conversa}#chat"))
 }
@@ -579,6 +613,7 @@ pub fn run() {
             pegar_recados,
             recados_tamanho,
             abrir_no_cosmo,
+            tem_cosmo_app,
             inicio_info
         ])
         .setup(|app| {
