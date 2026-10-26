@@ -500,6 +500,7 @@
     let canalAtual = null;
     let reconexaoTimer = null;
     let reconexaoTentativas = 0;
+    let estavelTimer = null;
 
     // Assina o canal de tempo real e — o que faltava — RECONECTA sozinho quando
     // ele cai (erro, timeout, fechado), com espera crescente (2s, 4s, 8s... máx 30s).
@@ -508,17 +509,23 @@
       const cfg = { event: 'INSERT', schema: 'convocacao', table: 'chamadas' };
       if (fid) cfg.filter = 'funcionario_id=eq.' + fid;
       const canal = db.channel('minhas-convocacoes-' + Date.now())
-        .on('postgres_changes', cfg, () => processarPendentes());
+        .on('postgres_changes', cfg, () => processarPendentes(true));
       canalAtual = canal;
       canal.subscribe(status => {
         if (canal !== canalAtual) return; // canal antigo descartado: ignora
         salvarStatus({ realtime: status });
         if (status === 'SUBSCRIBED') {
-          reconexaoTentativas = 0;
-          processarPendentes(); // pega o que chegou enquanto estava desconectado
+          // 26/10/2026: a conexão só conta como "boa" depois de 60 s de canal estável.
+          // Canal que flapa (assina e cai, assina e cai) não zera mais a espera nem
+          // fura a trava da busca — era isso que gerava um trem de UMA BUSCA A CADA
+          // 2 s nas máquinas com o canal instável (a maior fonte do egress estourado).
+          if (estavelTimer) clearTimeout(estavelTimer);
+          estavelTimer = setTimeout(() => { reconexaoTentativas = 0; }, 60000);
+          processarPendentes(); // pega o que chegou enquanto estava desconectado (trava de 25 s vale)
           return;
         }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          if (estavelTimer) { clearTimeout(estavelTimer); estavelTimer = null; }
           if (reconexaoTimer) clearTimeout(reconexaoTimer);
           const espera = Math.min(30000, 2000 * Math.pow(2, reconexaoTentativas++));
           salvarStatus({ realtime: status + ' (reconectando em ' + Math.round(espera / 1000) + 's)' });
@@ -529,8 +536,15 @@
 
     // Mostra a chamada pendente mais antiga (uma de cada vez). O Rust cuida da
     // janela tela cheia em todos os monitores + som + piscar; aqui só disparamos.
-    async function processarPendentes() {
+    // 26/10/2026: o Realtime é o caminho principal (o INSERT chega na hora e chama com
+    // forcar=true); a busca no banco virou rede de segurança e segura pelo menos 25 s
+    // entre idas — o poll de ~14 s das máquinas, 24/7, era 78% das requisições do
+    // projeto e estourou a cota de egress do Supabase (WORKLOG do Cosmo, 2026-10-26).
+    let ultimaBusca = 0;
+    async function processarPendentes(forcar) {
       if (mostrando) return;
+      if (!forcar && Date.now() - ultimaBusca < 25000) return;
+      ultimaBusca = Date.now();
       salvarStatus({ ultima_busca_pendentes: agora() });
       let pend = [];
       try {
@@ -556,7 +570,7 @@
     }
 
     async function conectarRealtime() {
-      if (realtimeConectado) { processarPendentes(); return; }
+      if (realtimeConectado) { processarPendentes(true); return; }
       realtimeConectado = true;
       let fid = null;
       try {
@@ -587,16 +601,16 @@
           }, 3000);
         }
         salvarStatus({ ultima_confirmacao: agora(), ultima_chamada_id: idChamada || '' });
-        setTimeout(processarPendentes, 300);
+        setTimeout(() => processarPendentes(true), 300);
       });
 
-      // Batimento vindo do lado nativo (Rust): acorda o app a cada 20s pra buscar
+      // Batimento vindo do lado nativo (Rust): acorda o app a cada 60 s pra buscar
       // pendências mesmo quando o sistema congela os timers do JS (App Nap do macOS).
       listen('verificar-pendentes', () => processarPendentes());
 
       // Chamados perdidos enquanto o PC estava desligado.
-      processarPendentes();
-      if (!pendentesTimer) pendentesTimer = setInterval(processarPendentes, 15000);
+      processarPendentes(true);
+      if (!pendentesTimer) pendentesTimer = setInterval(processarPendentes, 40000);
 
       // conta a versao antes de ligar o chat: o banco so manda a lateral pra 1.1.1 em diante
       contarInicio().then(iniciarChat, iniciarChat);
@@ -694,9 +708,9 @@
       try { const s = (await db.auth.getSession()).data.session; chatMeuId = (s && s.user && s.user.id) || null; } catch (e) {}
       assinarChat();
       agendarRecados(0);
-      setInterval(() => { if (Date.now() - chatUltima > 14000) buscarRecados(); }, 15000);
+      setInterval(() => { if (Date.now() - chatUltima > 55000) buscarRecados(); }, 60000);
       setInterval(() => { chatChave = ''; }, 120000);   // de tempos em tempos, entrega de novo (se a janela sumiu, volta)
-      listen('verificar-pendentes', () => { if (Date.now() - chatUltima > 14000) buscarRecados(); });
+      listen('verificar-pendentes', () => { if (Date.now() - chatUltima > 55000) buscarRecados(); });
       // "Abrir no Cosmo" (1.1.2): com o app do Cosmo instalado, anota o pedido no banco (a página do app
       // abre a conversa) e chama o app; sem ele, a conversa no navegador
       listen('recado-abrir', async (e) => {

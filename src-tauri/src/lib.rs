@@ -271,12 +271,16 @@ fn garantir_overlays(app: &AppHandle) {
     *app.state::<AppState>().overlays.lock().unwrap() = labels;
 }
 
-/// Batimento do lado nativo: a cada 20s emite um evento pro JS buscar pendencias.
+/// Batimento do lado nativo: a cada 60 s emite um evento pro JS buscar pendencias.
 /// O JS suspenso pelo App Nap (macOS) acorda quando recebe evento do Rust —
 /// e uma thread nativa nao e congelada como os timers do webview.
+/// 26/10/2026: era a cada 5 s — somado ao timer do JS, cada maquina ia ao banco
+/// a cada ~14 s, 24/7 (78% das requisicoes do projeto; a cota de egress do
+/// Supabase estourou). O Realtime e o caminho principal do chamado; isto aqui
+/// e so rede de seguranca.
 fn iniciar_batimento(app: AppHandle) {
     std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        std::thread::sleep(std::time::Duration::from_secs(60));
         let _ = app.emit("verificar-pendentes", ());
     });
 }
