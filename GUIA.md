@@ -104,6 +104,12 @@ instalado), já na conversa: a Convocação anota o pedido no banco (`chat_pedir
 página do Cosmo no app pega o pedido (vale 2 min) e abre a conversa. Sem o app do Cosmo (ou no Mac), abre
 a conversa no navegador, como antes.
 
+A **1.1.3** (26/10/2026) não muda nada na tela: o chamado passa a chegar pelo **Realtime** (na hora) e a
+busca de segurança no banco ficou espaçada (no máximo 1 a cada 25 s; timer de 40 s, batimento de 60 s;
+lateral do Chat a cada 60 s). Motivo: o tráfego do Supabase estourou a cota grátis — o app perguntava a
+cada poucos segundos, e um canal do Realtime que cai e volta fazia ele perguntar a cada 2 s. Se o Realtime
+falhar, a convocação ainda chega pela busca de segurança, em até ~40 s.
+
 ---
 
 ## Parte 3 — Lançar uma atualização depois
