@@ -614,6 +614,31 @@
 
       // conta a versao antes de ligar o chat: o banco so manda a lateral pra 1.1.1 em diante
       contarInicio().then(iniciarChat, iniciarChat);
+
+      // 1.2.0: com o Cosmo 0.3.0 neste computador e a pessoa na lista, a convocacao passa a ser so
+      // pelo Cosmo e esta Convocacao se desinstala sozinha (Rust: aposentar_se_puder). Confere 20 s
+      // depois de subir e a cada 30 min (o Cosmo pode atualizar depois).
+      setTimeout(tentarAposentar, 20000);
+      setInterval(tentarAposentar, 30 * 60 * 1000);
+    }
+
+    // ---------------- APOSENTAR (1.2.0) ----------------
+    // Rony, 06/11/2026: "nao quero mais dois apps". Nunca com alerta na tela.
+    let aposentando = false;
+    async function tentarAposentar() {
+      if (aposentando || mostrando) return;
+      try {
+        const s = await db.auth.getSession();
+        const id = s && s.data && s.data.session && s.data.session.user && s.data.session.user.id;
+        if (!id) return;
+        aposentando = true;
+        const r = await invoke('aposentar_se_puder', { usuario: id });
+        salvarStatus({ aposentar: r + ' (' + agora() + ')' });
+        if (r !== 'aposentou') aposentando = false;
+      } catch (e) {
+        aposentando = false;
+        salvarStatus({ aposentar: 'erro: ' + erroTexto(e) });
+      }
     }
 
     // ---------------- COMO O APP SUBIU (1.1.1) ----------------

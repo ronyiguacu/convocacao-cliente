@@ -514,6 +514,137 @@ fn abrir_endereco(url: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+// ---------- Aposentar: a Convocacao agora e o Cosmo (1.2.0) ----------
+//
+// Rony, 06/11/2026: "nao quero mais dois apps". O app do Cosmo 0.3.0 mostra a convocacao em tela
+// cheia (repositorio pulso: src-tauri/src/convocacao.rs e web/js/convocacao-app.js). Esta versao se
+// desinstala sozinha, em silencio, no computador que ja tem o Cosmo 0.3.0+ instalado, com a pessoa na
+// lista de LISTA_NO_COSMO — sem ir de computador em computador. Nunca com alerta na tela; sem o Cosmo
+// novo, fora da lista ou sem conseguir abrir o Cosmo, continua como sempre (ninguem fica sem
+// convocacao no meio do caminho). Por enquanto so no Windows (o Mac nao foi testado com o Cosmo 0.3.0).
+const LISTA_NO_COSMO: &str = "https://pulso-e8r.pages.dev/updates/convocacao-no-cosmo.json";
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn semver(v: &str) -> Option<(u32, u32, u32)> {
+    let p: Vec<u32> = v.trim().split('.').filter_map(|x| x.trim().parse().ok()).collect();
+    if p.len() >= 3 {
+        Some((p[0], p[1], p[2]))
+    } else {
+        None
+    }
+}
+
+/// A versao do Cosmo instalado, pelo registro que o instalador dele grava (Uninstall\Cosmo).
+#[cfg(windows)]
+fn versao_do_cosmo() -> Option<(u32, u32, u32)> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+    for raiz in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        if let Ok(k) = RegKey::predef(raiz).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Cosmo") {
+            if let Ok(v) = k.get_value::<String, _>("DisplayVersion") {
+                if let Some(t) = semver(&v) {
+                    return Some(t);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn rodando(imagem: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("tasklist")
+        .args(["/FI", &format!("IMAGENAME eq {imagem}"), "/NH", "/FO", "CSV"])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map(|s| String::from_utf8_lossy(&s.stdout).to_lowercase().contains(&imagem.to_lowercase()))
+        .unwrap_or(false)
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+async fn na_lista_do_cosmo(usuario: &str) -> bool {
+    let url = format!(
+        "{LISTA_NO_COSMO}?x={}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    );
+    let Ok(resp) = reqwest::Client::new().get(&url).timeout(std::time::Duration::from_secs(15)).send().await else {
+        return false;
+    };
+    let Ok(j) = resp.json::<serde_json::Value>().await else {
+        return false;
+    };
+    j["todos"].as_bool() == Some(true)
+        || j["pessoas"].as_array().map(|a| a.iter().any(|x| x.as_str() == Some(usuario))).unwrap_or(false)
+}
+
+/// Devolve o que aconteceu: aposentou, ou por que nao (nao_se_aplica, alerta_na_tela, sem_usuario,
+/// cosmo_antigo, fora_da_lista, cosmo_nao_abriu).
+#[tauri::command]
+async fn aposentar_se_puder(app: AppHandle, usuario: String) -> String {
+    #[cfg(not(windows))]
+    {
+        let _ = (&app, &usuario);
+        return "nao_se_aplica".into();
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const SEM_JANELA: u32 = 0x0800_0000;
+        const SOLTO: u32 = 0x0000_0008; // DETACHED_PROCESS: o desinstalador nao morre junto com o app
+        if alerta_na_tela(&app) {
+            return "alerta_na_tela".into();
+        }
+        let valido = usuario.len() == 36 && usuario.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+        if !valido {
+            return "sem_usuario".into();
+        }
+        match versao_do_cosmo() {
+            Some(v) if v >= (0, 3, 0) => {}
+            _ => return "cosmo_antigo".into(),
+        }
+        if !na_lista_do_cosmo(&usuario).await {
+            return "fora_da_lista".into();
+        }
+        // daqui pra frente quem mostra e o Cosmo: ele tem que estar aberto
+        if !rodando("cosmo.exe") {
+            if let Some(exe) = cosmo_instalado() {
+                let _ = std::process::Command::new(&exe).arg("--cosmo-background").creation_flags(SEM_JANELA).spawn();
+            }
+            std::thread::sleep(std::time::Duration::from_secs(8));
+            if !rodando("cosmo.exe") {
+                return "cosmo_nao_abriu".into();
+            }
+        }
+        if alerta_na_tela(&app) {
+            return "alerta_na_tela".into();
+        }
+        // sai do iniciar com o Windows (o desinstalador tambem tira; isto garante)
+        {
+            use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+            use winreg::RegKey;
+            if let Ok(run) = RegKey::predef(HKEY_CURRENT_USER)
+                .open_subkey_with_flags("Software\\Microsoft\\Windows\\CurrentVersion\\Run", KEY_SET_VALUE)
+            {
+                let _ = run.delete_value("Convocacao");
+            }
+        }
+        // desinstala em silencio: o desinstalador fica na pasta do app (em /S ele fecha o app sozinho)
+        if let Some(pasta) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
+            let un = pasta.join("uninstall.exe");
+            if un.is_file() {
+                let _ = std::process::Command::new(&un).arg("/S").creation_flags(SEM_JANELA | SOLTO).spawn();
+            }
+        }
+        let fim = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            fim.exit(0);
+        });
+        "aposentou".into()
+    }
+}
+
 /// Como o app subiu (versao, se foi sozinho com o computador, o iniciar com o sistema): a janela
 /// oculta conta pro banco e o Diagnostico mostra.
 #[tauri::command]
@@ -618,7 +749,8 @@ pub fn run() {
             recados_tamanho,
             abrir_no_cosmo,
             tem_cosmo_app,
-            inicio_info
+            inicio_info,
+            aposentar_se_puder
         ])
         .setup(|app| {
             let handle = app.handle().clone();
